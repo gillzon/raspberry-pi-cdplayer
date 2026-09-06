@@ -5,7 +5,7 @@ const TrackNavigation=require('./navigation.js');
 function setup(tracks=[1,2,3,4],current=0){
   let nextID=0,preview;
   const timers=new Map(),sent=[];
-  const nav=new TrackNavigation((...args)=>sent.push(args),value=>preview=value,(callback,delay)=>{assert.equal(delay,350);timers.set(++nextID,callback);return nextID},id=>timers.delete(id));
+  const nav=new TrackNavigation((...args)=>sent.push(args),value=>preview=value,(callback,delay)=>{assert.equal(delay,250);timers.set(++nextID,callback);return nextID},id=>timers.delete(id));
   nav.update('disc-a',tracks,current);
   return {nav,sent,timers,preview:()=>preview,flush(){const callbacks=[...timers.values()];timers.clear();callbacks.forEach(fn=>fn())}};
 }

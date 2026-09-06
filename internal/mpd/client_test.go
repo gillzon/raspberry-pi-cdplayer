@@ -244,3 +244,35 @@ func TestQueueMatchesChecksAllURIsInOrder(t *testing.T) {
 		})
 	}
 }
+
+func TestTrackAcknowledgmentUpdatesNavigationWithoutStatusRoundTrip(t *testing.T) {
+	c, done := serve(t, func(string) string { return "OK\n" })
+	if _, err := c.Connect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	c.lastStatus = map[string]string{"song": "0", "state": "play", "elapsed": "20", "duration": "180"}
+	if err := c.Control("track", 3); err != nil {
+		t.Fatal(err)
+	}
+	status := c.Status()
+	if status["song"] != "3" || status["state"] != "play" || status["elapsed"] != "0" || status["duration"] != "" {
+		t.Fatalf("stale navigation state: %v", status)
+	}
+	c.Close()
+	if got := <-done; !reflect.DeepEqual(got, []string{"play 3"}) {
+		t.Fatalf("unexpected extra MPD requests: %v", got)
+	}
+}
+func TestRejectedTrackDoesNotMoveDisplayedPosition(t *testing.T) {
+	c, _ := serve(t, func(string) string { return "ACK [2@0] {play} Bad song index\n" })
+	if _, err := c.Connect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	c.lastStatus = map[string]string{"song": "0", "state": "pause"}
+	if err := c.Control("track", 3); err == nil {
+		t.Fatal("missing rejection")
+	}
+	if c.Status()["song"] != "0" || c.Status()["state"] != "pause" {
+		t.Fatal("rejected track changed displayed state")
+	}
+}

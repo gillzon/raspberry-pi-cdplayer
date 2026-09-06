@@ -190,6 +190,27 @@ func (c *Client) Control(action string, position int) error {
 		return fmt.Errorf("unknown playback action")
 	}
 	_, err := c.command(command)
+	if err == nil {
+		// Reflect acknowledged state immediately so another navigation click uses
+		// the new position while the normal status poll is still pending.
+		if c.lastStatus == nil {
+			c.lastStatus = make(map[string]string)
+		}
+		switch action {
+		case "track":
+			c.lastStatus["song"] = strconv.Itoa(position)
+			c.lastStatus["state"] = "play"
+			delete(c.lastStatus, "duration")
+			c.lastStatus["elapsed"] = "0"
+			delete(c.lastStatus, "error")
+		case "play":
+			c.lastStatus["state"] = "play"
+		case "pause":
+			c.lastStatus["state"] = "pause"
+		case "stop":
+			c.lastStatus["state"] = "stop"
+		}
+	}
 	return err
 }
 

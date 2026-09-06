@@ -67,7 +67,7 @@ disc. If the player loop stalls, the page marks the status as delayed and
 control requests time out instead of waiting indefinitely.
 
 Rapid Next/Previous clicks are combined: the page previews the selected track,
-waits 350 ms after the last click, then sends one track selection. For example,
+waits 250 ms after the last click, then sends one track selection. For example,
 three Next clicks on track 1 jump directly to track 4. Other playback controls
 cancel a pending selection; track changes stop at the first/last audio track.
 
@@ -542,3 +542,10 @@ model and installed Raspberry Pi OS/display stack and are not configured yet.
 Preview with a 320×240 browser viewport. Keyboard equivalents for testing are
 Left/Right arrows (previous/next), P (pause), and Enter (play); these do not read
 GPIO buttons. Do not guess GPIO pins from the screen size alone.
+
+
+Track controls return when MPD acknowledges the command; they do not wait for
+an additional playback-status request. The selected track updates on that
+acknowledgment, and subsequent status polling reports playback errors separately.
+This reduces unnecessary button blocking, but drive seeks or an MPD command
+that itself takes too long can still delay a track change.

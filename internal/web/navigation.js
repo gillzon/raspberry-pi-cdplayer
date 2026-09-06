@@ -37,7 +37,7 @@ class TrackNavigation {
       this.pending = null;
       this.preview(null);
       this.send(track, discID);
-    }, 350);
+    }, 250);
   }
 }
 if (typeof module !== 'undefined') module.exports = TrackNavigation;

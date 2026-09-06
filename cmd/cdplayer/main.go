@@ -209,9 +209,9 @@ func main() {
 					}
 				}
 			}
-			if err == nil && controller.Source() == "cd" {
-				err = backend.PlaybackError()
-			}
+			// Acknowledge the control as soon as MPD acknowledges it. Playback
+			// health is refreshed by Step; a slow status reply must not turn
+			// an already accepted track change into a failed web command.
 			publish(err)
 			if err != nil {
 				slog.Warn("web playback command failed", "action", request.command.Action, "error", err)
