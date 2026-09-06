@@ -19,6 +19,7 @@ import (
 func main() {
 	device := flag.String("device", "/dev/sr0", "CD drive device (absolute /dev path)")
 	address := flag.String("mpd", "127.0.0.1:6601", "dedicated MPD TCP address")
+	autoDevice := flag.Bool("mpd-auto-device", false, "let MPD select the CD drive (single-drive workaround for Bad track number)")
 	poll := flag.Duration("poll", time.Second, "disc polling interval")
 	flag.Parse()
 	if *poll < 100*time.Millisecond || !strings.HasPrefix(filepath.Clean(*device), "/dev/") || strings.ContainsAny(*device, "\r\n\"\\") || flag.NArg() != 0 {
@@ -27,7 +28,10 @@ func main() {
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	backend := &mpd.Client{Address: *address, Device: filepath.Clean(*device)}
+	backend := &mpd.Client{Address: *address, Device: filepath.Clean(*device), AutoDevice: *autoDevice}
+	if *autoDevice {
+		slog.Warn("MPD will select its own CD drive; connect only one CD drive", "detected_device", *device)
+	}
 	defer backend.Close()
 	controller := &player.Controller{Drive: disc.Drive{Device: *device}, Backend: backend}
 	ticker := time.NewTicker(*poll)

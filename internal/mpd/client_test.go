@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -84,6 +85,40 @@ func TestACKDoesNotStartPartialQueue(t *testing.T) {
 		if cmd == "play 0" {
 			t.Fatal("played partial queue")
 		}
+	}
+}
+
+func TestAutoDeviceWorksWithFirstSlashParser(t *testing.T) {
+	// MPD 0.24.5 splits the part after cdda:// at the FIRST slash, so an
+	// explicit /dev/sr0/1 path is parsed as the invalid track "dev/sr0/1".
+	// Exercise the generated commands against that parser behavior.
+	var tracks []int
+	c, done := serve(t, func(cmd string) string {
+		if strings.HasPrefix(cmd, "add ") {
+			uri, err := strconv.Unquote(strings.TrimPrefix(cmd, "add "))
+			if err != nil {
+				return "ACK [2@0] {add} Invalid argument\n"
+			}
+			device, track, found := strings.Cut(strings.TrimPrefix(uri, "cdda://"), "/")
+			number, err := strconv.Atoi(track)
+			if !found || device != "" || err != nil || number < 1 || number > 99 {
+				return "ACK [2@0] {add} Bad track number\n"
+			}
+			tracks = append(tracks, number)
+		}
+		return "OK\n"
+	})
+	c.AutoDevice = true
+	if _, err := c.Connect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Start([]int{1, 2, 12}); err != nil {
+		t.Fatal(err)
+	}
+	c.Close()
+	<-done
+	if !reflect.DeepEqual(tracks, []int{1, 2, 12}) {
+		t.Fatalf("tracks: %v", tracks)
 	}
 }
 

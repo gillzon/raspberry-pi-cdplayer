@@ -175,6 +175,26 @@ the `cdio_paranoia` plugin, drive permissions/power, ALSA card name, and that
 another process has not taken the output. An MPD `play` acknowledgment alone
 does not prove the audio output opened successfully.
 
+### MPD reports `Bad track number`
+
+Some MPD releases (confirmed in 0.24.5) incorrectly split a CD URI at the
+first slash. A valid URI such as `cdda:///dev/sr0/1` then fails before the drive
+is opened. With **only one CD drive connected**, run:
+
+```sh
+go run ./cmd/cdplayer -mpd 127.0.0.1:6600 -mpd-auto-device
+```
+
+Use port `6601` for the project's dedicated MPD instance. This option generates
+`cdda:///1`, `cdda:///2`, etc., letting MPD discover the audio drive. Go still
+monitors the path given by `-device`. With multiple drives, MPD could select a
+different drive; use an MPD version with the corrected parser and omit this
+option instead. For an installed service, append `-mpd-auto-device` to its
+`ExecStart`, then run `sudo systemctl daemon-reload` and restart `cdplayer`.
+
+Parser sources: [MPD 0.24.5](https://github.com/MusicPlayerDaemon/MPD/blob/v0.24.5/src/input/plugins/CdioParanoiaInputPlugin.cxx),
+[current upstream](https://github.com/MusicPlayerDaemon/MPD/blob/master/src/input/plugins/CdioParanoiaInputPlugin.cxx).
+
 ## Development checks
 
 ```sh

@@ -14,9 +14,12 @@ import (
 type Client struct {
 	Address string
 	Device  string
-	conn    net.Conn
-	reader  *bufio.Scanner
-	dial    func(context.Context, string, string) (net.Conn, error)
+	// AutoDevice omits the device path to work around MPD releases whose CD
+	// parser splits at the first slash. Use only with one audio CD drive.
+	AutoDevice bool
+	conn       net.Conn
+	reader     *bufio.Scanner
+	dial       func(context.Context, string, string) (net.Conn, error)
 }
 
 // Connect returns true for a new session so the controller can restore the queue
@@ -99,7 +102,11 @@ func (c *Client) Start(tracks []int) error {
 		}
 	}
 	for _, track := range tracks {
-		uri := fmt.Sprintf("cdda://%s/%d", c.Device, track)
+		device := c.Device
+		if c.AutoDevice {
+			device = ""
+		}
+		uri := fmt.Sprintf("cdda://%s/%d", device, track)
 		if _, err := c.command("add " + strconv.Quote(uri)); err != nil {
 			return err
 		}
