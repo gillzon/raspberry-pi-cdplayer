@@ -3,9 +3,11 @@ package metadata
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -145,5 +147,60 @@ func TestLookupFailureAndMissingCover(t *testing.T) {
 			want := map[int]string{404: "not_found", 503: "error", 200: "ready"}[status]
 			await(t, func() bool { return m.Snapshot("disc").Status == want })
 		})
+	}
+}
+
+func TestNetworkRecoveryRetriesWithoutReinsertion(t *testing.T) {
+	for _, failArtwork := range []bool{false, true} {
+		t.Run(fmt.Sprint("artwork=", failArtwork), func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			m := New("")
+			m.retryDelay = 20 * time.Millisecond
+			var albums, covers atomic.Int32
+			m.client = &http.Client{Transport: transport(func(r *http.Request) (*http.Response, error) {
+				if strings.Contains(r.URL.Path, "/discid/") {
+					n := albums.Add(1)
+					if !failArtwork && n == 1 {
+						return nil, errors.New("temporary DNS failure")
+					}
+					return response(200, fixture), nil
+				}
+				n := covers.Add(1)
+				if failArtwork && n == 1 {
+					return response(503, ""), nil
+				}
+				return response(200, "\xff\xd8\xff\xe0test-image"), nil
+			})}
+			go m.Run(ctx)
+			m.Observe(ctx, disc.Disc{ID: "disc", MusicBrainzID: "mb-id", Tracks: []int{1, 2}})
+			await(t, func() bool { return m.Snapshot("disc").CoverURL != "" })
+			if failArtwork && albums.Load() != 1 {
+				t.Fatal("artwork retry repeated successful album lookup")
+			}
+			if !failArtwork && albums.Load() != 2 {
+				t.Fatal("album lookup did not recover")
+			}
+			if strings.Contains(m.Snapshot("disc").Message, "unavailable") {
+				t.Fatal("stale network error after recovery")
+			}
+		})
+	}
+}
+
+func TestRemovalPreventsScheduledRetry(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m := New("")
+	m.retryDelay = 30 * time.Millisecond
+	var calls atomic.Int32
+	m.client = &http.Client{Transport: transport(func(r *http.Request) (*http.Response, error) { calls.Add(1); return nil, errors.New("offline") })}
+	go m.Run(ctx)
+	m.Observe(ctx, disc.Disc{ID: "disc", MusicBrainzID: "mb-id", Tracks: []int{1, 2}})
+	await(t, func() bool { return m.Snapshot("disc").Status == "error" })
+	m.Observe(ctx, disc.Disc{})
+	time.Sleep(80 * time.Millisecond)
+	if calls.Load() != 1 || m.Snapshot("").Status != "empty" {
+		t.Fatal("removed disc was retried")
 	}
 }

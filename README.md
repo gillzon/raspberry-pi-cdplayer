@@ -181,7 +181,10 @@ disables disk caching. The updated systemd unit uses `/var/cache/cdplayer` via
 service so this directory is writable under its filesystem restrictions.
 
 Unknown discs keep numbered tracks and placeholder art. A failed lookup never
-stops music; reinsert the disc to retry after restoring the network. Missing
+stops music. Failed album requests and temporary artwork failures retry after
+15, 30, 60, then 120 seconds between attempts, without reinserting the disc.
+The UI reports the failure reason; removing the disc cancels its lookup.
+An unmatched disc or missing cover (HTTP 404) is not repeatedly requested. Missing
 artwork does not hide available titles. If several editions match, the app uses
 the first matching edition and displays a notice; manual edition selection is
 not included. Metadata lookup supports standard all-audio CDs and CD Extra

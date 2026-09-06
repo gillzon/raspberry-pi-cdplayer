@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -30,6 +31,7 @@ type Manager struct {
 	client                    *http.Client
 	musicBrainz, coverArchive string
 	nextRequest               time.Time
+	retryDelay                time.Duration
 }
 
 func New(cacheDir string) *Manager {
@@ -91,11 +93,35 @@ func (m *Manager) publish(ctx context.Context, r record) {
 }
 
 func (m *Manager) Run(ctx context.Context) {
+	baseDelay := m.retryDelay
+	if baseDelay <= 0 {
+		baseDelay = 15 * time.Second
+	}
+	delay := baseDelay
+	var timer *time.Timer
+	var retry <-chan time.Time
+	stopRetry := func() {
+		if timer != nil {
+			timer.Stop()
+		}
+		retry = nil
+	}
+	defer stopRetry()
+	scheduleRetry := func() {
+		stopRetry()
+		timer = time.NewTimer(delay)
+		retry = timer.C
+		delay = min(2*delay, 2*time.Minute)
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-m.wake:
+			stopRetry()
+			delay = baseDelay
+		case <-retry:
+			retry = nil
 		}
 		m.mu.RLock()
 		d, taskCtx := m.desired, m.taskContext
@@ -103,13 +129,19 @@ func (m *Manager) Run(ctx context.Context) {
 		if taskCtx == nil || taskCtx.Err() != nil || d.MusicBrainzID == "" {
 			continue
 		}
-		r := m.load(d.ID)
+		m.mu.RLock()
+		r := m.current
+		m.mu.RUnlock()
+		if r.Info.DiscID != d.ID || r.Info.Status != "ready" {
+			r = m.load(d.ID)
+		}
 		if r.Info.Status != "ready" {
 			info, err := m.lookup(taskCtx, d)
 			if err != nil {
-				m.publish(taskCtx, record{Info: Info{DiscID: d.ID, Status: "error", Message: "Album lookup unavailable; reinsert the disc to retry"}})
+				m.publish(taskCtx, record{Info: Info{DiscID: d.ID, Status: "error", Message: "Album lookup unavailable; retrying automatically: " + err.Error()}})
 				if taskCtx.Err() == nil {
-					slog.Warn("album lookup failed", "error", err)
+					slog.Warn("album lookup failed", "error", err, "retry_in", delay)
+					scheduleRetry()
 				}
 				continue
 			}
@@ -123,7 +155,24 @@ func (m *Manager) Run(ctx context.Context) {
 				if kind == "image/jpeg" || kind == "image/png" || kind == "image/webp" {
 					r.Art = art
 					r.Info.CoverURL = "/api/art/" + d.ID
+					if strings.HasPrefix(r.Info.Message, "Album artwork unavailable;") {
+						r.Info.Message = ""
+						if r.Info.Matches > 1 {
+							r.Info.Message = "Multiple editions match this disc; showing the first matching edition"
+						}
+					}
 				}
+			}
+			if taskCtx.Err() == nil && (err != nil || status == 429 || status >= 500) {
+				detail := fmt.Sprintf("HTTP %d", status)
+				if err != nil {
+					detail = err.Error()
+				}
+				r.Info.Message = "Album artwork unavailable; retrying automatically: " + detail
+				slog.Warn("album artwork lookup failed", "error", detail, "retry_in", delay)
+				scheduleRetry()
+			} else if taskCtx.Err() == nil && status == 404 {
+				r.Info.Message = "No artwork available for the matched edition"
 			}
 		}
 		if taskCtx.Err() == nil && r.Info.Status == "ready" {
