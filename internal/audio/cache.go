@@ -211,6 +211,10 @@ func (c *Cache) Status() Status {
 func (s *session) signal() { close(s.changed); s.changed = make(chan struct{}) }
 func (s *session) fail(err error) {
 	s.mu.Lock()
+	if s.ctx.Err() != nil {
+		s.mu.Unlock()
+		return // Disc removal, source switching and shutdown cancel intentionally.
+	}
 	s.err = err
 	s.signal()
 	s.mu.Unlock()
@@ -249,32 +253,20 @@ func (s *session) run(device string, layout []Layout, open OpenReader) {
 			target = selected
 			block = n
 		}
+		// Keep reading the selected track sequentially. Seeking away for
+		// speculative intros (or old HTTP demand) can drain the live buffer.
 		if target == nil {
-			for t, n := range s.demand {
-				if !t.ready[n] {
-					target = t
-					block = n
+			for n, ready := range selected.ready {
+				if !ready {
+					target, block = selected, n
 					break
 				}
 			}
 		}
 		if target == nil {
-			// Build a cushion before seeking away, then prepare adjacent track
-			// starts so Next/Previous can begin from disk while the drive seeks.
-			// Live stream demand above always wins over this speculative work.
-			candidates := []struct{ index, blocks int }{{s.selected, 30}, {s.selected + 1, 10}, {s.selected - 1, 10}}
-			for _, candidate := range candidates {
-				if candidate.index < 0 || candidate.index >= len(s.tracks) {
-					continue
-				}
-				t := s.tracks[candidate.index]
-				for n := 0; n < min(candidate.blocks, len(t.ready)); n++ {
-					if !t.ready[n] {
-						target, block = t, n
-						break
-					}
-				}
-				if target != nil {
+			for t, n := range s.demand {
+				if !t.ready[n] {
+					target, block = t, n
 					break
 				}
 			}

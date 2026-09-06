@@ -2,6 +2,7 @@ package disc
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -36,5 +37,17 @@ func TestSlowProbeDoesNotBlockStatusReaders(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("status blocked on physical probe")
+	}
+}
+
+func TestBlockedProbeIsNotReportedAsOldDriveStatus(t *testing.T) {
+	m := &Monitor{path: "/dev/fake", probeStarted: time.Now().Add(-6 * time.Second)}
+	_, err := m.Read()
+	if err == nil || !strings.Contains(err.Error(), "probe has not returned") {
+		t.Fatalf("blocked probe hidden: %v", err)
+	}
+	m.probeStarted = time.Time{}
+	if _, err := m.Read(); err != nil {
+		t.Fatalf("completed probe still blocked: %v", err)
 	}
 }

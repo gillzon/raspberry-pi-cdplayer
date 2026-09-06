@@ -42,19 +42,22 @@ func TestRealReaderSeeksCDImageWithoutReopening(t *testing.T) {
 	if !strings.Contains(err.Error(), "expected 0..151, reader reported 0..150") {
 		t.Fatalf("missing track boundary diagnostic: %v", err)
 	}
-	r, err := openReader(ctx, cue, []Layout{{1, 0, 150}, {2, 150, 300}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer r.Close()
-	for _, sector := range []int{0, 1, 150, 2} {
-		got, err := r.Read(sector, 1)
+	for _, verify := range []bool{false, true} {
+		r, err := ReaderWithVerification(verify)(ctx, cue, []Layout{{1, 0, 150}, {2, 150, 300}})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !bytes.Equal(got, pcm[sector*sectorBytes:(sector+1)*sectorBytes]) {
-			t.Fatalf("incorrect PCM at sector %d", sector)
+		defer r.Close()
+		for _, sector := range []int{0, 1, 150, 2} {
+			got, err := r.Read(sector, 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(got, pcm[sector*sectorBytes:(sector+1)*sectorBytes]) {
+				t.Fatalf("incorrect PCM at sector %d", sector)
+			}
 		}
+		r.Close()
 	}
 }
 func TestCacheStorageLockAndCrashCleanup(t *testing.T) {

@@ -3,6 +3,7 @@ package disc
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -10,14 +11,15 @@ import (
 // Monitor isolates potentially blocking drive status/TOC ioctls from controls.
 // All calls to the underlying drive, including eject, use this one worker.
 type Monitor struct {
-	Updates  chan struct{}
-	observer func(Disc, error)
-	mu       sync.RWMutex
-	disc     Disc
-	err      error
-	path     string
-	eject    chan ejectRequest
-	ctx      context.Context
+	Updates      chan struct{}
+	observer     func(Disc, error)
+	mu           sync.RWMutex
+	disc         Disc
+	err          error
+	path         string
+	probeStarted time.Time
+	eject        chan ejectRequest
+	ctx          context.Context
 }
 type ejectRequest struct {
 	ctx  context.Context
@@ -35,9 +37,17 @@ func NewMonitor(ctx context.Context, d monitoredDrive, interval time.Duration) *
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		sample := func() {
+			started := time.Now()
+			m.mu.Lock()
+			m.probeStarted = started
+			m.mu.Unlock()
 			v, err := d.Read()
 			path := d.DevicePath()
+			if duration := time.Since(started); duration >= time.Second {
+				slog.Warn("slow physical CD drive probe", "device", path, "duration", duration, "error", err)
+			}
 			m.mu.Lock()
+			m.probeStarted = time.Time{}
 			changed := m.disc.ID != v.ID || m.path != path || fmt.Sprint(m.err) != fmt.Sprint(err)
 			m.disc, m.err, m.path = v, err, path
 			observer := m.observer
@@ -76,8 +86,15 @@ func NewMonitor(ctx context.Context, d monitoredDrive, interval time.Duration) *
 	}()
 	return m
 }
-func (m *Monitor) Read() (Disc, error) { m.mu.RLock(); defer m.mu.RUnlock(); return m.disc, m.err }
-func (m *Monitor) DevicePath() string  { m.mu.RLock(); defer m.mu.RUnlock(); return m.path }
+func (m *Monitor) Read() (Disc, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if !m.probeStarted.IsZero() && time.Since(m.probeStarted) >= 5*time.Second {
+		return m.disc, fmt.Errorf("CD drive probe has not returned for at least %s (device %s); waiting for Linux drive I/O", time.Since(m.probeStarted).Truncate(5*time.Second), m.path)
+	}
+	return m.disc, m.err
+}
+func (m *Monitor) DevicePath() string { m.mu.RLock(); defer m.mu.RUnlock(); return m.path }
 func (m *Monitor) Eject() error {
 	ctx, cancel := context.WithTimeout(m.ctx, 8*time.Second)
 	defer cancel()

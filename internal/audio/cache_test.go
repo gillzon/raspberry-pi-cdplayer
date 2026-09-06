@@ -191,7 +191,7 @@ func TestReadyWaitsForAudioAndReportsFailure(t *testing.T) {
 	}
 }
 
-func TestAdjacentStartsCachedBeforeRestOfCurrentTrack(t *testing.T) {
+func TestContinuousTrackReadAndManualSelection(t *testing.T) {
 	r := &fakeReader{calls: make(chan readCall, 1), allow: make(chan struct{}, 1)}
 	c := &Cache{Root: t.TempDir(), Open: func(ctx context.Context, _ string, _ []Layout) (Reader, error) { r.ctx = ctx; return r, nil }}
 	if err := c.Observe("long", "/dev/fake", []Layout{{1, 0, 9000}, {3, 9000, 18000}, {7, 18000, 27000}}); err != nil {
@@ -205,37 +205,48 @@ func TestAdjacentStartsCachedBeforeRestOfCurrentTrack(t *testing.T) {
 		}
 		r.allow <- struct{}{}
 	}
-	// Current track gets a cushion, then Next gets its intro before the
-	// remaining 90 seconds of the current track are read.
-	for n := 0; n < 30; n++ {
+	// Read all 120 seconds sequentially, including past the former 30s
+	// cutoff. No adjacent-track seek may interrupt continuous playback.
+	for n := 0; n < 120; n++ {
 		check(n * 75)
 	}
-	for n := 0; n < 10; n++ {
-		check(9000 + n*75)
+	if got := nextRead(t, r); got.sector != 9000 {
+		t.Fatalf("next track not cached after current: %+v", got)
 	}
-	if got := nextRead(t, r); got.sector != 30*75 {
-		t.Fatalf("did not resume current track: %+v", got)
-	}
-	// Jump to the last track while a read is in flight. Its first blocks
-	// take priority, then Previous is primed even though it is not selected.
+	// A manual selection still takes priority at the next read boundary.
 	c.Select(7)
-	r.allow <- struct{}{}
-	for n := 0; n < 30; n++ {
-		check(18000 + n*75)
-	}
-	// Previous was already primed, so no duplicate reads are needed.
-	if got := nextRead(t, r); got.sector != 18000+30*75 {
-		t.Fatalf("cached previous intro reread: %+v", got)
-	}
-	// Demand on the selected stream must preempt further speculative reads.
 	c.mu.Lock()
 	s := c.session
 	c.mu.Unlock()
+	s.mu.Lock()
+	s.demand[s.tracks[1]] = 20
+	s.mu.Unlock()
+	r.allow <- struct{}{}
+	// A pending request from the old stream must not cause a seek back
+	// after priming the new track's first two blocks.
+	for n := 0; n < 40; n++ {
+		check(18000 + n*75)
+	}
+	if got := nextRead(t, r); got.sector != 18000+40*75 {
+		t.Fatalf("new track interrupted: %+v", got)
+	}
 	s.mu.Lock()
 	s.demand[s.tracks[2]] = 80
 	s.mu.Unlock()
 	r.allow <- struct{}{}
 	if got := nextRead(t, r); got.sector != 18000+80*75 {
-		t.Fatalf("live demand not prioritized: %+v", got)
+		t.Fatalf("selected stream demand ignored: %+v", got)
+	}
+}
+
+func TestIntentionalCancellationIsNotCacheFailure(t *testing.T) {
+	_, r, s := setupCache(t)
+	nextRead(t, r)
+	s.cancel()
+	<-s.done
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.err != nil {
+		t.Fatalf("cancellation reported as failure: %v", s.err)
 	}
 }

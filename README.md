@@ -597,17 +597,20 @@ The updater runs `cdplayer -check-audio` before replacing the installed binary.
 This checks the runtime libraries without opening the drive. For a foreground
 run: `go run ./cmd/cdplayer -mpd 127.0.0.1:6600` (stop the boot service first).
 
-- One helper owns the digital audio-reading session. It uses libcdio-paranoia's
-  correction logic and seeks within that session instead of reopening the drive
-  for each MPD track URL.
-- Audio is cached in one-second blocks. The selected track's first two blocks
-  and stream requests take priority over background read-ahead. After buffering
-  30 seconds of the selected track, the reader prepares the first 10 seconds of
-  the next and previous tracks before continuing to cache whole tracks. This
-  reduces adjacent-track startup waits once those beginnings are cached; it
-  cannot guarantee instant playback or prevent a stall on a slow drive. A selection can
-  take effect after the current physical read finishes; it cannot interrupt a
-  kernel drive read halfway through.
+- One helper owns the digital audio-reading session and seeks within that
+  session instead of reopening the drive for each MPD track URL. By default,
+  extra software verification/repair is disabled to reduce repeated reads.
+  Use `-audio-verify` to restore libcdio-paranoia's full correction mode for
+  difficult discs. Without it, damaged discs or inaccurate reads can produce
+  audible errors. Hardware spin-up and drive initialization still take time;
+  the app starts after the first audio block, not after caching a whole track.
+- Audio is cached in one-second blocks and playback starts before the whole
+  track is cached. The reader stays on the selected track until it is fully
+  cached, then reads following tracks. It does not seek away to prepare nearby
+  track intros while the selected track is incomplete. Manual track selection
+  takes priority after the current physical read finishes; it cannot interrupt
+  a kernel drive read halfway through. Uncached track changes still need a seek.
+  A drive that reads slower than playback can still exhaust the audio buffer.
 - A separate **loopback-only**, dynamically allocated HTTP port serves WAV data
   to MPD. It supports byte ranges and waits for missing blocks. MPD and cdplayer
   must run on the same machine. This audio endpoint works even with `-http ''`.

@@ -74,7 +74,9 @@ def main():
         para = init(drive)
         if not para:
             raise RuntimeError('cannot initialize CD reader')
-        mode(para, 0xff ^ 0x20)
+        # Normal playback avoids repeated software verification reads. Keep
+        # the full correction mode available for scratched/problematic discs.
+        mode(para, (0xff ^ 0x20) if globals().get('VERIFY_AUDIO', False) else 0)
         next_sector = None
         sys.stdout.buffer.write(b'CDPCM1\n')
         sys.stdout.buffer.flush()

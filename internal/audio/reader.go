@@ -47,6 +47,17 @@ func openReader(ctx context.Context, device string, layout []Layout) (Reader, er
 	return openReaderProgram(ctx, device, layout, readerProgram)
 }
 
+// ReaderWithVerification enables extra overlapping reads and software repair.
+// The default reader favours playback latency over extraction verification.
+func ReaderWithVerification(verify bool) OpenReader {
+	if !verify {
+		return openReader
+	}
+	return func(ctx context.Context, device string, layout []Layout) (Reader, error) {
+		return openReaderProgram(ctx, device, layout, "VERIFY_AUDIO = True\n"+readerProgram)
+	}
+}
+
 func openReaderProgram(ctx context.Context, device string, layout []Layout, program string) (Reader, error) {
 	ctx, cancelCause := context.WithCancelCause(ctx)
 	cancel := func() { cancelCause(context.Canceled) }
