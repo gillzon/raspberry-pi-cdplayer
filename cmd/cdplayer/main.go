@@ -99,6 +99,7 @@ func main() {
 	drive := disc.NewMonitor(ctx, rawDrive, *poll)
 	controller := &player.Controller{Drive: drive, Backend: backend}
 	var audioCache *audio.Cache
+	audioReady := make(chan struct{}, 1)
 	if *cachedAudio {
 		host, _, err := net.SplitHostPort(*address)
 		if err != nil || (host != "localhost" && !net.ParseIP(host).IsLoopback()) {
@@ -115,6 +116,7 @@ func main() {
 			root = filepath.Join(*cacheDir, "audio")
 		}
 		audioCache = &audio.Cache{Root: root, BaseURL: "http://" + audioListener.Addr().String(), Open: audio.ReaderWithOptions(*verifyAudio, *cdSpeed)}
+		audioCache.ReadyNotify = audioReady
 		if err := audioCache.Init(); err != nil {
 			audioListener.Close()
 			slog.Error("initialize audio cache", "error", err)
@@ -331,6 +333,7 @@ func main() {
 			}
 			return
 		case <-drive.Updates:
+		case <-audioReady:
 		case <-ticker.C:
 		}
 	}

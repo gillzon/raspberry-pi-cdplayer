@@ -45,6 +45,9 @@ type Cache struct {
 	Root          string
 	BaseURL       string
 	Open          OpenReader
+	// ReadyNotify receives a nonblocking notification when first audio is cached.
+	// Set before Observe; a buffered channel avoids losing the wake-up.
+	ReadyNotify chan<- struct{}
 }
 type session struct {
 	mu             sync.Mutex
@@ -137,7 +140,13 @@ func (c *Cache) Observe(id, device string, layout []Layout) error {
 		opener = openReader
 	}
 	c.workers.Add(1)
-	go func() { defer c.workers.Done(); defer close(s.done); defer cleanup(); s.run(device, layout, opener) }()
+	readyNotify := c.ReadyNotify
+	go func() {
+		defer c.workers.Done()
+		defer close(s.done)
+		defer cleanup()
+		s.run(device, layout, opener, readyNotify)
+	}()
 	return nil
 }
 func (c *Cache) Close() {
@@ -220,13 +229,16 @@ func (s *session) fail(err error) {
 	s.mu.Unlock()
 	slog.Error("CD audio cache failed", "error", err)
 }
-func (s *session) run(device string, layout []Layout, open OpenReader) {
+func (s *session) run(device string, layout []Layout, open OpenReader, readyNotify chan<- struct{}) {
+	started := time.Now()
 	r, err := open(s.ctx, device, layout)
 	if err != nil {
 		s.fail(err)
 		<-s.ctx.Done()
 		return
 	}
+	opened := time.Now()
+	slog.Info("CD audio reader opened", "device", device, "duration", opened.Sub(started))
 	defer func() {
 		if r != nil {
 			r.Close()
@@ -318,10 +330,18 @@ func (s *session) run(device string, layout []Layout, open OpenReader) {
 			return
 		}
 		s.mu.Lock()
+		firstAudio := s.cached == 0
 		target.ready[block] = true
 		s.cached += int64(len(data))
 		s.signal()
 		s.mu.Unlock()
+		if firstAudio {
+			slog.Info("CD first audio cached", "device", device, "read_duration", time.Since(opened), "total_duration", time.Since(started))
+			select {
+			case readyNotify <- struct{}{}:
+			default:
+			}
+		}
 	}
 }
 func wavHeader(size uint32) []byte {

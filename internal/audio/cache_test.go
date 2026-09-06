@@ -250,3 +250,39 @@ func TestIntentionalCancellationIsNotCacheFailure(t *testing.T) {
 		t.Fatalf("cancellation reported as failure: %v", s.err)
 	}
 }
+
+func TestFirstAudioWakesPlayerOnlyAfterDataIsReady(t *testing.T) {
+	wake := make(chan struct{}, 1)
+	r := &fakeReader{calls: make(chan readCall, 16), allow: make(chan struct{}, 16)}
+	c := &Cache{Root: t.TempDir(), ReadyNotify: wake, Open: func(ctx context.Context, _ string, _ []Layout) (Reader, error) { r.ctx = ctx; return r, nil }}
+	if err := c.Observe("disc", "/dev/fake", []Layout{{1, 0, 300}}); err != nil {
+		t.Fatal(err)
+	}
+	defer c.Shutdown()
+	nextRead(t, r)
+	select {
+	case <-wake:
+		t.Fatal("notified before audio read")
+	default:
+	}
+	if c.Ready() != ErrPreparing {
+		t.Fatal("ready without audio")
+	}
+	r.allow <- struct{}{}
+	select {
+	case <-wake:
+	case <-time.After(2 * time.Second):
+		t.Fatal("missing readiness notification")
+	}
+	if err := c.Ready(); err != nil {
+		t.Fatal(err)
+	}
+	nextRead(t, r)
+	r.allow <- struct{}{}
+	nextRead(t, r)
+	select {
+	case <-wake:
+		t.Fatal("repeated startup notification")
+	default:
+	}
+}

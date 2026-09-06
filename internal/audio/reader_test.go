@@ -49,13 +49,17 @@ func TestRealReaderSeeksCDImageWithoutReopening(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer r.Close()
-			for _, sector := range []int{0, 1, 150, 2} {
-				got, err := r.Read(sector, 1)
-				if err != nil {
-					t.Fatal(err)
+			for _, request := range []readCall{{0, 75}, {75, 75}, {150, 75}, {2, 1}, {225, 75}} {
+				var got []byte
+				for len(got) < request.count*sectorBytes {
+					part, err := r.Read(request.sector+len(got)/sectorBytes, request.count-len(got)/sectorBytes)
+					if err != nil {
+						t.Fatal(err)
+					}
+					got = append(got, part...)
 				}
-				if !bytes.Equal(got, pcm[sector*sectorBytes:(sector+1)*sectorBytes]) {
-					t.Fatalf("incorrect PCM at sector %d", sector)
+				if !bytes.Equal(got, pcm[request.sector*sectorBytes:(request.sector+request.count)*sectorBytes]) {
+					t.Fatalf("incorrect PCM at sector %d, verify=%v", request.sector, verify)
 				}
 			}
 			r.Close()

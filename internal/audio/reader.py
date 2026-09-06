@@ -40,6 +40,7 @@ def main():
     open_drive = fn('cdio_cddap_open', C.c_int, C.c_void_p)
     close_drive = fn('cdio_cddap_close', C.c_int, C.c_void_p)
     set_speed = fn('cdio_cddap_speed_set', C.c_int, C.c_void_p, C.c_int)
+    read_audio = fn('cdio_cddap_read', C.c_long, C.c_void_p, C.c_void_p, C.c_int32, C.c_long)
     paraname = ctypes.util.find_library('cdio_paranoia')
     if not paraname:
         raise RuntimeError('libcdio_paranoia missing; install the libcdio-paranoia runtime package')
@@ -79,12 +80,11 @@ def main():
             actual_start, actual_end = first(drive, n), last(drive, n) + 1
             if not is_audio(drive, n) or actual_start != t['start'] or actual_end != t['end']:
                 raise RuntimeError(f"track {n} layout mismatch: expected {t['start']}..{t['end']}, reader reported {actual_start}..{actual_end}")
-        para = init(drive)
-        if not para:
-            raise RuntimeError('cannot initialize CD reader')
-        # Normal playback avoids repeated software verification reads. Keep
-        # the full correction mode available for scratched/problematic discs.
-        mode(para, (0xff ^ 0x20) if globals().get('VERIFY_AUDIO', False) else 0)
+        if globals().get('VERIFY_AUDIO', False):
+            para = init(drive)
+            if not para:
+                raise RuntimeError('cannot initialize CD reader')
+            mode(para, 0xff ^ 0x20)
         next_sector = None
         sys.stdout.buffer.write(b'CDPCM1\n')
         sys.stdout.buffer.flush()
@@ -92,17 +92,27 @@ def main():
             sector, count = map(int, line.split())
             if count < 1 or count > 75 or not any(t['start'] <= sector and sector + count <= t['end'] for t in layout):
                 raise RuntimeError('read outside audio track')
-            if next_sector != sector:
-                if seek(para, sector, 0) < 0:
-                    raise RuntimeError('CD seek failed')
-            blocks = []
-            for _ in range(count):
-                block = read(para, None, 20)
-                if not block:
-                    raise RuntimeError('CD read failed at sector ' + str(sector))
-                blocks.append(C.string_at(block, 2352))
-            data = b''.join(blocks)
-            next_sector = sector + count
+            if para:
+                if next_sector != sector:
+                    if seek(para, sector, 0) < 0:
+                        raise RuntimeError('CD seek failed')
+                blocks = []
+                for offset in range(count):
+                    block = read(para, None, 20)
+                    if not block:
+                        raise RuntimeError('CD read failed at sector ' + str(sector + offset))
+                    blocks.append(C.string_at(block, 2352))
+                data = b''.join(blocks)
+                next_sector = sector + count
+            else:
+                # The standard CDDA API handles drive transfer limits and
+                # native sample byte order. A short read is completed by Go;
+                # never pad unread sectors with silence.
+                buffer = C.create_string_buffer(count * 2352)
+                actual = read_audio(drive, buffer, sector, count)
+                if actual <= 0 or actual > count:
+                    raise RuntimeError(f'CD read failed at sector {sector} (result {actual})')
+                data = buffer.raw[:actual * 2352]
             if sys.byteorder != 'little':
                 swapped = bytearray(data)
                 swapped[0::2], swapped[1::2] = data[1::2], data[0::2]
