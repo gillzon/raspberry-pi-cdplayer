@@ -6,11 +6,27 @@
 <style>
 :root{color-scheme:dark;font:17px system-ui,sans-serif;background:#131817;color:#e8eee9}body{max-width:640px;margin:40px auto;padding:0 20px}h1{font-size:2rem;margin-bottom:8px}.muted{color:#a8b7ae}section{background:#202925;border:1px solid #35473d;border-radius:14px;padding:22px;margin:22px 0}button{font:inherit;background:#30493b;color:inherit;border:1px solid #54745e;border-radius:9px;padding:12px 16px;cursor:pointer}button:hover,button[aria-current=true]{background:#476d53}button:disabled{opacity:.45;cursor:wait}.controls{display:flex;gap:8px;flex-wrap:wrap}#tracks{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px}#error,#commandError{color:#ffb8a5;white-space:pre-wrap}progress{width:100%;accent-color:#9ed6ad}#now{font-size:1.5rem}small{overflow-wrap:anywhere}
 </style>
-<h1>CD player</h1><div id="connection" class="muted" role="status">Connecting…</div>
+<style>[hidden]{display:none!important}.tabs{display:flex;gap:8px;margin:20px 0}.tabs [aria-selected=true]{background:#476d53}.metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}.metrics section{margin:0}.value{font-size:1.8rem;margin:10px 0}dt{color:#a8b7ae;margin-top:14px}dd{margin:4px 0;overflow-wrap:anywhere}</style>
+<h1>CD player</h1>
+<nav class="tabs" role="tablist" aria-label="Views"><button id="playerTab" role="tab" data-tab="playerPanel" aria-controls="playerPanel" aria-selected="true">Player</button><button id="systemTab" role="tab" data-tab="systemPanel" aria-controls="systemPanel" aria-selected="false" tabindex="-1">Raspberry Pi</button></nav>
+<div id="playerPanel" role="tabpanel" aria-labelledby="playerTab">
+<div id="connection" class="muted" role="status">Connecting…</div>
 <section><div id="now">Waiting for status</div><p id="disc" class="muted"></p><progress id="progress" value="0" max="1"></progress><p id="time">0:00 / 0:00</p>
-<div class="controls"><button data-action="previous">Previous</button><button data-action="play">Play</button><button data-action="pause">Pause</button><button data-action="stop">Stop</button><button data-action="next">Next</button></div>
+<div class="controls"><button data-action="previous">Previous</button><button data-action="play">Play</button><button data-action="pause">Pause</button><button data-action="stop">Stop</button><button data-action="next">Next</button><button data-action="eject">Eject</button></div>
 <p id="error" role="status"></p><p id="commandError" role="alert"></p></section>
 <h2>Tracks</h2><div id="tracks"></div><p class="muted"><small id="details"></small></p>
+</div>
+<div id="systemPanel" role="tabpanel" aria-labelledby="systemTab" hidden>
+<p id="systemConnection" class="muted" role="status">Loading system information…</p>
+<div class="metrics">
+<section><div class="muted">CPU temperature</div><div id="temperature" class="value">—</div></section>
+<section><div class="muted">CPU usage · all cores</div><div id="cpu" class="value">—</div><progress id="cpuMeter" value="0" max="100" aria-label="CPU usage"></progress></section>
+<section><div class="muted">Memory used</div><div id="memory" class="value">—</div><progress id="memoryMeter" value="0" max="100" aria-label="Memory usage"></progress></section>
+<section><div class="muted">Uptime</div><div id="uptime" class="value">—</div></section>
+</div>
+<section><dl><dt>Hostname</dt><dd id="hostname">—</dd><dt>Model</dt><dd id="model">—</dd><dt>Architecture / CPU cores</dt><dd id="architecture">—</dd></dl></section>
+<p class="muted">Updates every two seconds. Unavailable sensors show “Unavailable”. Memory use excludes memory Linux can reclaim.</p>
+</div>
 <script>
 const $=id=>document.getElementById(id);
 const duration=n=>{n=Math.max(0,Math.floor(Number(n)||0));return Math.floor(n/60)+':'+String(n%60).padStart(2,'0')};
@@ -32,16 +48,31 @@ async function refresh(){
   const key=JSON.stringify(tracks);
   if(key!==trackKey){$('tracks').replaceChildren(...tracks.map(n=>{const b=document.createElement('button');b.textContent='Track '+n;b.dataset.track=n;b.onclick=()=>control('track',n);return b}));trackKey=key}
   document.querySelectorAll('[data-track]').forEach(b=>b.setAttribute('aria-current',Number(b.dataset.track)===track?'true':'false'));
-  document.querySelectorAll('button').forEach(b=>b.disabled=busy||stale||(!tracks.length&&b.dataset.action!=='stop'));
- }catch(e){$('connection').textContent='Cannot reach player — retrying…';document.querySelectorAll('button').forEach(b=>b.disabled=true)}
+  document.querySelectorAll('[data-action],[data-track]').forEach(b=>b.disabled=busy||stale||(!tracks.length&&!['stop','eject'].includes(b.dataset.action)));
+ }catch(e){$('connection').textContent='Cannot reach player — retrying…';document.querySelectorAll('[data-action],[data-track]').forEach(b=>b.disabled=true)}
 }
 async function control(action,track){
- busy=true;document.querySelectorAll('button').forEach(b=>b.disabled=true);$('commandError').textContent='';
+ busy=true;document.querySelectorAll('[data-action],[data-track]').forEach(b=>b.disabled=true);$('commandError').textContent='';
  try{const r=await fetch('/api/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,track}),signal:AbortSignal.timeout(10000)});if(!r.ok)throw new Error(await r.text())}
  catch(e){$('commandError').textContent=e.message}
  finally{busy=false;await refresh()}
 }
 document.querySelectorAll('[data-action]').forEach(b=>b.onclick=()=>control(b.dataset.action));
+const tabs=[...document.querySelectorAll('[data-tab]')];
+function selectTab(tab){tabs.forEach(b=>{const active=b===tab;b.setAttribute('aria-selected',String(active));b.tabIndex=active?0:-1;$(b.dataset.tab).hidden=!active})}
+tabs.forEach((tab,i)=>{tab.onclick=()=>selectTab(tab);tab.onkeydown=e=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(e.key)){e.preventDefault();const target=tabs[e.key==='Home'?0:e.key==='End'?tabs.length-1:(i+(e.key==='ArrowRight'?1:tabs.length-1))%tabs.length];selectTab(target);target.focus()}}});
+async function systemPoll(){
+ try{
+  const r=await fetch('/api/system',{signal:AbortSignal.timeout(4000)});if(!r.ok)throw new Error('Unavailable');const s=await r.json();
+  $('systemConnection').textContent=Date.now()-Date.parse(s.updated)>6000?'System information delayed':'Updated '+new Date(s.updated).toLocaleTimeString();
+  $('temperature').textContent=s.temperature_c==null?'Unavailable':s.temperature_c.toFixed(1)+' °C';
+  $('cpu').textContent=s.cpu_percent==null?'Unavailable':s.cpu_percent.toFixed(1)+'%';$('cpuMeter').value=s.cpu_percent||0;
+  $('memory').textContent=s.memory_used==null||s.memory_total==null?'Unavailable':Math.round(s.memory_used/1048576)+' / '+Math.round(s.memory_total/1048576)+' MiB';$('memoryMeter').value=s.memory_total?100*s.memory_used/s.memory_total:0;
+  const hours=Math.floor((s.uptime_seconds||0)/3600);$('uptime').textContent=s.uptime_seconds==null?'Unavailable':Math.floor(hours/24)+'d '+hours%24+'h '+Math.floor(s.uptime_seconds/60)%60+'m';
+  $('hostname').textContent=s.hostname||'Unavailable';$('model').textContent=s.model||'Unavailable';$('architecture').textContent=(s.architecture||'Unavailable')+' / '+s.cpus;
+ }catch(e){$('systemConnection').textContent='Cannot reach system information — retrying…'}
+ setTimeout(systemPoll,2000);
+}systemPoll();
 async function poll(){await refresh();setTimeout(poll,1000)}poll();
 </script>
 </html>

@@ -42,7 +42,20 @@ go run ./cmd/cdplayer -mpd 127.0.0.1:6600 -mpd-auto-device
 
 The page shows disc presence, audio track numbers, playback state, elapsed/total
 track time, and the latest player error. Click a track to play it, or use Play,
-Pause, Stop, Previous, and Next. Album and song names are not looked up yet.
+Pause, Stop, Previous, Next, and Eject. Eject stops and clears playback before
+opening the configured drive's tray. If stopping fails, the tray is left alone;
+if ejecting fails (for example, a locked tray), the page shows the error.
+Album and song names are not looked up yet.
+
+The **Raspberry Pi** tab shows CPU temperature, overall CPU usage, used/total
+memory, uptime, hostname, model, architecture, and core count. These measurements
+refresh every two seconds independently of the CD player loop. CPU usage needs
+two samples; unavailable sensors show “Unavailable”. CPU usage is calculated
+from Linux CPU counters across all cores, with idle and I/O wait excluded from
+busy time. Used memory is total minus available memory. No additional packages
+or root access are needed for these measurements. The app user needs permission
+to access the CD drive for ejecting (the provided service has the `cdrom` group).
+
 Status refreshes once per second from memory; browser requests never scan the
 disc. If the player loop stalls, the page marks the status as delayed and
 control requests time out instead of waiting indefinitely.

@@ -116,3 +116,62 @@ func TestTransientFailures(t *testing.T) {
 		t.Fatal("playback error caused restart loop")
 	}
 }
+
+type ejectDrive struct {
+	fakeDrive
+	eject func() error
+}
+
+func (d *ejectDrive) Eject() error { return d.eject() }
+
+func TestEjectStopsBeforeOpeningAndDoesNotReplayOldDisc(t *testing.T) {
+	b := &fakeBackend{}
+	d := &ejectDrive{fakeDrive: fakeDrive{disc: disc.Disc{ID: "album", Tracks: []int{1}}}}
+	d.eject = func() error {
+		if b.clears != 1 {
+			t.Fatal("tray opened before clearing playback")
+		}
+		return nil
+	}
+	c := &Controller{Drive: d, Backend: b}
+	if err := c.Step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Eject(); err != nil {
+		t.Fatal(err)
+	}
+	if c.Disc().ID != "" {
+		t.Fatal("disc remains visible after eject")
+	}
+	if err := c.Step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(b.starts) != 1 {
+		t.Fatal("restarted while tray opens")
+	}
+	d.disc = disc.Disc{}
+	if err := c.Step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	d.disc = disc.Disc{ID: "album", Tracks: []int{1}}
+	if err := c.Step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(b.starts) != 2 {
+		t.Fatal("same disc failed to restart after reinsertion")
+	}
+}
+
+func TestEjectFailures(t *testing.T) {
+	b := &fakeBackend{connectErr: errors.New("MPD unavailable")}
+	called := false
+	d := &ejectDrive{eject: func() error { called = true; return errors.New("tray locked") }}
+	c := &Controller{Drive: d, Backend: b}
+	if c.Eject() == nil || called {
+		t.Fatal("ejected despite failure to stop playback")
+	}
+	b.connectErr = nil
+	if c.Eject() == nil || !called {
+		t.Fatal("eject failure not reported")
+	}
+}

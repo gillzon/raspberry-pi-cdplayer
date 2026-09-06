@@ -18,6 +18,7 @@ import (
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/disc"
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/mpd"
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/player"
+	"github.com/gillzon/raspberry-pi-cdplayer/internal/systeminfo"
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/web"
 )
 
@@ -62,6 +63,9 @@ func main() {
 		}
 	}}
 	website.Set(web.State{Device: *device, Error: "Starting player"})
+	monitor := systeminfo.New()
+	website.System = monitor.Snapshot
+	go monitor.Run(ctx)
 	if *httpAddress != "" {
 		listener, err := net.Listen("tcp", *httpAddress)
 		if err != nil {
@@ -112,7 +116,11 @@ func main() {
 				}
 			}
 			if err == nil {
-				err = backend.Control(request.command.Action, position)
+				if request.command.Action == "eject" {
+					err = controller.Eject()
+				} else {
+					err = backend.Control(request.command.Action, position)
+				}
 			}
 			if err == nil {
 				err = backend.PlaybackError()

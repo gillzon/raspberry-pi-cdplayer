@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/disc"
+	"github.com/gillzon/raspberry-pi-cdplayer/internal/systeminfo"
 )
 
 func TestStatusIsSnapshot(t *testing.T) {
@@ -39,6 +40,7 @@ func TestControls(t *testing.T) {
 	}{
 		{`{"action":"track","track":12}`, 204, true},
 		{`{"action":"stop"}`, 204, true},
+		{`{"action":"eject"}`, 204, true},
 		{`{"action":"track","track":0}`, 400, false},
 		{`{"action":"track","track":100}`, 400, false},
 		{`{"action":"arbitrary command"}`, 400, false},
@@ -62,6 +64,19 @@ func TestControls(t *testing.T) {
 				t.Fatalf("code %d, called %v", w.Code, called)
 			}
 		})
+	}
+}
+
+func TestSystemEndpoint(t *testing.T) {
+	s := &Server{System: func() systeminfo.Info { return systeminfo.Info{Hostname: "raspberrypi", CPUs: 4} }}
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, httptest.NewRequest("GET", "/api/system", nil))
+	var got systeminfo.Info
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if w.Code != 200 || got.Hostname != "raspberrypi" || got.CPUs != 4 {
+		t.Fatalf("response: %s", w.Body.String())
 	}
 }
 

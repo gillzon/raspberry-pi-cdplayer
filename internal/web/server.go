@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/disc"
+	"github.com/gillzon/raspberry-pi-cdplayer/internal/systeminfo"
 )
 
 //go:embed index.html
@@ -36,6 +37,7 @@ type Server struct {
 	mu      sync.RWMutex
 	state   State
 	Control func(context.Context, Command) error
+	System  func() systeminfo.Info
 }
 
 func (s *Server) Set(state State) {
@@ -48,6 +50,15 @@ func (s *Server) Set(state State) {
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/system", func(w http.ResponseWriter, r *http.Request) {
+		if s.System == nil {
+			http.Error(w, "System information unavailable", 503)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		json.NewEncoder(w).Encode(s.System())
+	})
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Write(page)
@@ -67,7 +78,7 @@ func (s *Server) Handler() http.Handler {
 			return
 		}
 		switch cmd.Action {
-		case "play", "pause", "stop", "next", "previous":
+		case "play", "pause", "stop", "next", "previous", "eject":
 		case "track":
 			if cmd.Track < 1 || cmd.Track > 99 {
 				http.Error(w, "Invalid track", 400)

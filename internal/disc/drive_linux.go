@@ -16,6 +16,21 @@ type Drive struct {
 	cache  tocCache
 }
 
+// Eject opens the configured tray after MPD has released its audio reader.
+func (d *Drive) Eject() error {
+	fd, err := syscall.Open(d.Device, syscall.O_RDONLY|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return fmt.Errorf("open drive for eject: %w", err)
+	}
+	defer syscall.Close(fd)
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), 0x5309, 0) // CDROMEJECT
+	if errno != 0 {
+		return fmt.Errorf("eject %s: %w", d.Device, errno)
+	}
+	d.cache = tocCache{}
+	return nil
+}
+
 func (d *Drive) Read() (Disc, error) {
 	fd, err := syscall.Open(d.Device, syscall.O_RDONLY|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
 	if err != nil {

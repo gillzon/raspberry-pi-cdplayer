@@ -2,6 +2,7 @@ package player
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -18,11 +19,12 @@ type Backend interface {
 }
 
 type Controller struct {
-	Drive    Drive
-	Backend  Backend
-	current  string
-	ready    bool
-	observed disc.Disc
+	Drive     Drive
+	Backend   Backend
+	current   string
+	ready     bool
+	observed  disc.Disc
+	ejectedID string
 }
 
 // Step is called immediately at startup and periodically thereafter. Failed
@@ -38,6 +40,14 @@ func (c *Controller) Step(ctx context.Context) error {
 		return err
 	}
 	c.observed = d
+	if c.ejectedID != "" {
+		if d.ID == c.ejectedID {
+			// Some drives briefly report the old TOC while the tray is opening.
+			c.observed = disc.Disc{}
+			return nil
+		}
+		c.ejectedID = ""
+	}
 	fresh, err := c.Backend.Connect(ctx)
 	if err != nil {
 		return err
@@ -69,3 +79,19 @@ func (c *Controller) Step(ctx context.Context) error {
 }
 
 func (c *Controller) Disc() disc.Disc { return c.observed }
+
+func (c *Controller) Eject() error {
+	drive, ok := c.Drive.(interface{ Eject() error })
+	if !ok {
+		return fmt.Errorf("drive does not support eject")
+	}
+	if err := c.Backend.Clear(); err != nil {
+		return fmt.Errorf("stop playback before eject: %w", err)
+	}
+	if err := drive.Eject(); err != nil {
+		return err
+	}
+	c.ejectedID = c.observed.ID
+	c.current, c.ready, c.observed = "", true, disc.Disc{}
+	return nil
+}
