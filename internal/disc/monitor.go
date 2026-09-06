@@ -34,17 +34,17 @@ type monitoredDrive interface {
 func NewMonitor(ctx context.Context, d monitoredDrive, interval time.Duration) *Monitor {
 	m := &Monitor{Updates: make(chan struct{}, 1), ctx: ctx, err: fmt.Errorf("detecting CD drive"), eject: make(chan ejectRequest)}
 	go func() {
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		sample := func() {
+		sample := func() time.Duration {
 			started := time.Now()
 			m.mu.Lock()
 			m.probeStarted = started
 			m.mu.Unlock()
 			v, err := d.Read()
 			path := d.DevicePath()
-			if duration := time.Since(started); duration >= time.Second {
-				slog.Warn("slow physical CD drive probe", "device", path, "duration", duration, "error", err)
+			duration := time.Since(started)
+			delay := probeDelay(interval, duration)
+			if duration >= time.Second {
+				slog.Warn("slow physical CD drive probe", "device", path, "duration", duration, "next_probe_in", delay, "error", err)
 			}
 			m.mu.Lock()
 			m.probeStarted = time.Time{}
@@ -61,14 +61,18 @@ func NewMonitor(ctx context.Context, d monitoredDrive, interval time.Duration) *
 				default:
 				}
 			}
+			return delay
 		}
-		sample()
+		// Start the timer after the physical call completes: a ticker queues
+		// ticks during slow I/O and can otherwise cause back-to-back probes.
+		timer := time.NewTimer(sample())
+		defer timer.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case <-ticker.C:
-				sample()
+			case <-timer.C:
+				timer.Reset(sample())
 			case r := <-m.eject:
 				err := r.ctx.Err()
 				if err == nil {
@@ -85,6 +89,12 @@ func NewMonitor(ctx context.Context, d monitoredDrive, interval time.Duration) *
 		}
 	}()
 	return m
+}
+
+func probeDelay(interval, duration time.Duration) time.Duration {
+	// Give the shared drive a quiet interval after expensive status calls.
+	// Keep normal insertion polling fast and bound the added detection delay.
+	return max(interval, min(2*duration, 5*time.Second))
 }
 func (m *Monitor) Read() (Disc, error) {
 	m.mu.RLock()

@@ -99,11 +99,7 @@ func readTOC(fd int) (Disc, error) {
 		}
 	}
 	d.Layout = audioLayout(tracks, int(header[0]), int(header[1]), offsets, lastSession)
-	// Mixed-session layouts need session-specific lead-out handling. Avoid
-	// sending an incorrect identifier for those discs; playback still works.
-	if len(tracks) == int(header[1]-header[0])+1 {
-		d.MusicBrainzID = musicBrainzID(int(header[0]), int(header[1]), offsets)
-	}
+	d.MusicBrainzID = metadataDiscID(int(header[0]), int(header[1]), offsets, d.Layout)
 	return d, nil
 }
 

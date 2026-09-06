@@ -55,7 +55,7 @@ func (m *Manager) Observe(ctx context.Context, d disc.Disc) {
 	}
 	if d.MusicBrainzID == "" {
 		m.current.Info.Status = "unavailable"
-		m.current.Info.Message = "Album lookup is currently available for standard audio CDs"
+		m.current.Info.Message = "Album lookup supports audio CDs and verified CD Extra layouts; this disc layout is unsupported"
 		return
 	}
 	select {

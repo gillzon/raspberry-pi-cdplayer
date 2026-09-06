@@ -34,6 +34,13 @@ ready, so routine polls only check drive status instead of reading every track
 again during audio extraction. Removal, disconnection, or a not-ready state
 invalidates the cache.
 
+Drive polling waits after each completed probe rather than catching up on
+missed ticks. Slow probes increase that wait to twice their duration, capped
+at five seconds (or the configured poll interval if longer), to give audio
+reads time on the shared drive. Physical removal detection can consequently
+take the waiting interval plus the next probe's duration. Fast probes retain
+the normal polling interval; the web eject request can bypass the timer wait.
+
 Physical GPIO buttons remain a later milestone. Audio caching is temporary,
 not a permanent ripped music library.
 
@@ -177,8 +184,10 @@ Unknown discs keep numbered tracks and placeholder art. A failed lookup never
 stops music; reinsert the disc to retry after restoring the network. Missing
 artwork does not hide available titles. If several editions match, the app uses
 the first matching edition and displays a notice; manual edition selection is
-not included. For now, metadata lookup supports standard all-audio CDs; mixed
-audio/data discs still play but use numbered tracks. Ejecting or swapping discs
+not included. Metadata lookup supports standard all-audio CDs and CD Extra
+discs with a verified final data-session boundary. CD Extra IDs exclude the
+data track and session gap, as required by MusicBrainz. Other mixed layouts
+still play but use numbered tracks. Ejecting or swapping discs
 cancels pending requests and prevents old album information appearing on the
 next disc.
 
