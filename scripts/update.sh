@@ -15,7 +15,7 @@ if (( EUID == 0 )); then
     echo "Run as your normal user, without sudo. The install steps will request sudo." >&2
     exit 1
 fi
-for dependency in git go sudo systemctl flock getent; do
+for dependency in git go sudo systemctl flock getent eject; do
     if ! command -v "$dependency" >/dev/null 2>&1; then
         echo "Missing command: $dependency. Install it before running this script." >&2
         exit 1

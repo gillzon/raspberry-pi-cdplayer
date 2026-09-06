@@ -15,6 +15,7 @@ import (
 
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/disc"
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/metadata"
+	"github.com/gillzon/raspberry-pi-cdplayer/internal/spotify"
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/systeminfo"
 )
 
@@ -25,6 +26,8 @@ var page []byte
 var navigation []byte
 
 type State struct {
+	Source   string            `json:"source"`
+	Spotify  spotify.State     `json:"spotify"`
 	Device   string            `json:"device"`
 	Disc     disc.Disc         `json:"disc"`
 	MPD      map[string]string `json:"mpd"`
@@ -34,6 +37,7 @@ type State struct {
 }
 
 type Command struct {
+	Token  string `json:"token"`
 	Action string `json:"action"`
 	Track  int    `json:"track"`
 	DiscID string `json:"disc_id"`
@@ -107,7 +111,7 @@ func (s *Server) Handler() http.Handler {
 			return
 		}
 		switch cmd.Action {
-		case "play", "pause", "stop", "next", "previous", "eject":
+		case "spotify-start", "source-cd", "play", "pause", "stop", "next", "previous", "eject":
 		case "track":
 			if cmd.Track < 1 || cmd.Track > 99 {
 				http.Error(w, "Invalid track", 400)

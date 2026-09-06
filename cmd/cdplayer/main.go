@@ -19,6 +19,7 @@ import (
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/metadata"
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/mpd"
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/player"
+	"github.com/gillzon/raspberry-pi-cdplayer/internal/spotify"
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/systeminfo"
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/web"
 )
@@ -40,7 +41,24 @@ func main() {
 		defaultCache = filepath.Join(path, "cdplayer")
 	}
 	cacheDir := flag.String("cache-dir", defaultCache, "album and artwork cache directory (empty disables disk caching)")
+	spotifyEnabled := flag.Bool("spotify", os.Getenv("CDPLAYER_SPOTIFY_ENABLED") == "1", "enable Spotify Connect (requires librespot and web interface)")
+	spotifyDevice := flag.String("spotify-device", envDefault("CDPLAYER_SPOTIFY_DEVICE", "plughw:CARD=Headphones,DEV=0"), "Spotify ALSA output")
+	spotifyName := flag.String("spotify-name", envDefault("CDPLAYER_SPOTIFY_NAME", "Raspberry Pi CD Player"), "Spotify Connect device name")
+	spotifyEvent := flag.Bool("spotify-event", false, "internal Spotify sink handoff hook")
 	flag.Parse()
+	if *spotifyEvent {
+		if err := spotify.Hook(); err != nil {
+			slog.Error("Spotify handoff", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if *spotifyEnabled && *httpAddress == "" {
+		slog.Error("Spotify requires the web interface")
+		os.Exit(2)
+	}
+	receiver := &spotify.Manager{Binary: envDefault("CDPLAYER_SPOTIFY_BINARY", "librespot"), Device: *spotifyDevice, State: spotify.State{Enabled: *spotifyEnabled, Name: *spotifyName}}
+	defer receiver.Stop()
 	if *poll < 100*time.Millisecond || !strings.HasPrefix(filepath.Clean(*device), "/dev/") || strings.ContainsAny(*device, "\r\n\"\\") || flag.NArg() != 0 {
 		slog.Error("use a /dev/ device path, no positional arguments, and a poll interval of at least 100ms")
 		os.Exit(2)
@@ -81,6 +99,15 @@ func main() {
 			slog.Error("start web interface", "error", err)
 			return
 		}
+		host, port, _ := net.SplitHostPort(listener.Addr().String())
+		if ip := net.ParseIP(host); ip != nil && ip.IsUnspecified() {
+			if ip.To4() != nil {
+				host = "127.0.0.1"
+			} else {
+				host = "::1"
+			}
+		}
+		receiver.Callback = "http://" + net.JoinHostPort(host, port) + "/api/control"
 		server := &http.Server{Handler: website.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second}
 		defer server.Close()
 		go func() {
@@ -97,13 +124,14 @@ func main() {
 	lastError := ""
 	publish := func(err error) {
 		albums.Observe(ctx, controller.Disc())
-		state := web.State{Device: *device, Disc: controller.Disc(), MPD: backend.Status(), Updated: time.Now()}
+		state := web.State{Source: controller.Source(), Spotify: receiver.State, Device: *device, Disc: controller.Disc(), MPD: backend.Status(), Updated: time.Now()}
 		if err != nil {
 			state.Error = err.Error()
 		}
 		website.Set(state)
 	}
 	for {
+		receiver.Tick()
 		err := controller.Step(ctx)
 		if err != nil {
 			if err.Error() != lastError {
@@ -129,16 +157,35 @@ func main() {
 				}
 			}
 			if err == nil {
-				if request.command.Action == "eject" {
+				switch request.command.Action {
+				case "spotify-start":
+					if !receiver.Accept(request.command.Token) {
+						err = fmt.Errorf("obsolete Spotify receiver")
+					} else {
+						err = controller.UseSpotify(request.ctx)
+					}
+				case "source-cd":
+					if err = receiver.Stop(); err == nil {
+						controller.UseCD()
+						receiver.Tick()
+					}
+				case "eject":
 					err = controller.Eject()
-				} else {
-					err = backend.Control(request.command.Action, position)
+				default:
+					if controller.Source() == "spotify" {
+						err = fmt.Errorf("select Switch to CD first")
+					} else {
+						err = backend.Control(request.command.Action, position)
+					}
 				}
 			}
-			if err == nil {
+			if err == nil && controller.Source() == "cd" {
 				err = backend.PlaybackError()
 			}
 			publish(err)
+			if err != nil {
+				slog.Warn("web playback command failed", "action", request.command.Action, "error", err)
+			}
 			request.result <- err
 		case <-ctx.Done():
 			if err := backend.Clear(); err != nil {
@@ -148,4 +195,11 @@ func main() {
 		case <-ticker.C:
 		}
 	}
+}
+
+func envDefault(key, fallback string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return fallback
 }

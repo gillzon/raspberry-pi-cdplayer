@@ -3,10 +3,12 @@
 package disc
 
 import (
+	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -18,14 +20,10 @@ type Drive struct {
 
 // Eject opens the configured tray after MPD has released its audio reader.
 func (d *Drive) Eject() error {
-	fd, err := syscall.Open(d.Device, syscall.O_RDONLY|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
-	if err != nil {
-		return fmt.Errorf("open drive for eject: %w", err)
-	}
-	defer syscall.Close(fd)
-	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), 0x5309, 0) // CDROMEJECT
-	if errno != 0 {
-		return fmt.Errorf("eject %s: %w", d.Device, errno)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := ejectDevice(ctx, d.Device); err != nil {
+		return err
 	}
 	d.cache = tocCache{}
 	return nil

@@ -25,11 +25,19 @@ type Controller struct {
 	ready     bool
 	observed  disc.Disc
 	ejectedID string
+	spotify   bool
 }
 
 // Step is called immediately at startup and periodically thereafter. Failed
 // reads preserve the current session; failed queue changes are retried.
 func (c *Controller) Step(ctx context.Context) error {
+	if c.spotify {
+		_, err := c.Backend.Connect(ctx)
+		if err != nil {
+			return err
+		}
+		return c.Backend.Clear()
+	}
 	probeStart := time.Now()
 	d, err := c.Drive.Read()
 	probeDuration := time.Since(probeStart)
@@ -94,4 +102,21 @@ func (c *Controller) Eject() error {
 	c.ejectedID = c.observed.ID
 	c.current, c.ready, c.observed = "", true, disc.Disc{}
 	return nil
+}
+
+// UseSpotify suppresses autoplay even if stopping MPD fails. The caller must
+// keep the Spotify sink gated until this returns successfully.
+func (c *Controller) UseSpotify(ctx context.Context) error {
+	c.spotify = true
+	if _, err := c.Backend.Connect(ctx); err != nil {
+		return err
+	}
+	return c.Backend.Clear()
+}
+func (c *Controller) UseCD() { c.spotify = false; c.ready = false }
+func (c *Controller) Source() string {
+	if c.spotify {
+		return "spotify"
+	}
+	return "cd"
 }

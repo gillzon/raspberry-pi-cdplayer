@@ -175,3 +175,52 @@ func TestEjectFailures(t *testing.T) {
 		t.Fatal("eject failure not reported")
 	}
 }
+
+func TestSpotifyHandoffAndReturn(t *testing.T) {
+	ctx := context.Background()
+	d := &fakeDrive{disc: disc.Disc{ID: "a", Tracks: []int{1, 2}}}
+	b := &fakeBackend{}
+	c := &Controller{Drive: d, Backend: b}
+	if err := c.Step(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.UseSpotify(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if c.Source() != "spotify" || b.clears != 1 {
+		t.Fatal("handoff did not stop CD")
+	}
+	d.disc = disc.Disc{ID: "b", Tracks: []int{1, 2, 3}}
+	d.err = errors.New("USB disconnected")
+	for i := 0; i < 3; i++ {
+		b.fresh = true
+		if err := c.Step(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(b.starts) != 1 {
+		t.Fatal("CD restarted while Spotify selected")
+	}
+	d.err = nil
+	c.UseCD()
+	if err := c.Step(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if c.Source() != "cd" || len(b.starts) != 2 || len(b.starts[1]) != 3 {
+		t.Fatal("did not start current disc")
+	}
+}
+func TestSpotifyFailedHandoffSuppressesAutoplay(t *testing.T) {
+	b := &fakeBackend{connectErr: errors.New("MPD unavailable")}
+	c := &Controller{Drive: &fakeDrive{disc: disc.Disc{ID: "a", Tracks: []int{1}}}, Backend: b}
+	if c.UseSpotify(context.Background()) == nil {
+		t.Fatal("acknowledged failed handoff")
+	}
+	b.connectErr = nil
+	if err := c.Step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(b.starts) != 0 || b.clears != 1 {
+		t.Fatal("failed handoff allowed autoplay")
+	}
+}

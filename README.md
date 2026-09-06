@@ -45,6 +45,12 @@ track time, and the latest player error. Click a track to play it, or use Play,
 Pause, Stop, Previous, Next, and Eject. Eject stops and clears playback before
 opening the configured drive's tray. If stopping fails, the tray is left alone;
 if ejecting fails (for example, a locked tray), the page shows the error.
+The button uses the installed `eject` utility, which supports unlocking and
+alternative eject methods for USB drives, with a five-second command timeout.
+Install it with `sudo apt install eject` if missing. Failures are also logged
+in `journalctl -u cdplayer`. If terminal eject works but the service reports
+permission denied, compare with `sudo -u cdplayer -g cdrom eject -v /dev/sr0`;
+the app runs with that service account's permissions rather than your login's.
 Album art, album/artist names, and track titles are looked up in the background.
 
 The **Raspberry Pi** tab shows CPU temperature, overall CPU usage, used/total
@@ -371,3 +377,74 @@ handling. Native Linux tests also check missing/invalid drive paths.
 References: [MPD CD playback plugin](https://mpd.readthedocs.io/en/stable/plugins.html#cdio-paranoia),
 [MPD protocol](https://mpd.readthedocs.io/en/stable/protocol.html),
 [Linux CD-ROM ABI](https://github.com/torvalds/linux/blob/master/include/uapi/linux/cdrom.h).
+
+## Spotify Connect (optional)
+
+The app can run an ALSA-enabled **librespot** receiver. On your phone, select
+**Raspberry Pi CD Player** in Spotify's device picker on the same LAN. Spotify
+Premium is required by [librespot](https://github.com/librespot-org/librespot).
+The [blocking sink hook](https://github.com/librespot-org/librespot/wiki/Events)
+stops and clears MPD before Spotify opens the sound output. If MPD cannot be
+stopped, Spotify waits instead of playing over the CD.
+
+While Spotify is selected, inserting a CD does not start it. Pausing Spotify or
+moving playback to your phone leaves the CD stopped. **Switch to CD** in the web
+UI disconnects the receiver and starts the current disc from track 1. The
+receiver then advertises again for your next Spotify session. CD controls are
+disabled during Spotify; eject remains available. Spotify tracks, volume, and
+play/pause are controlled from your phone; the web UI shows the selected source
+and receiver availability, not Spotify track metadata. Disc information is the
+last observation while Spotify is selected, since drive polling is suspended.
+
+On the Pi:
+
+1. Install an ALSA-enabled `librespot` binary. The
+   [Raspotify installation instructions](https://github.com/dtcooper/raspotify)
+   provide packaged binaries. Check OS compatibility: current Raspotify packages
+   target Debian 13 / Trixie; do not force these packages onto an older OS.
+2. Once these repository changes are available on your Pi, run:
+
+   ```sh
+   bash scripts/update.sh
+   bash scripts/setup-spotify.sh
+   ```
+
+The setup script requires an installed, updated `cdplayer.service`. It disables
+Raspotify's standalone service, because the Go app manages the receiver itself,
+and writes `/etc/cdplayer/spotify.conf` if it does not already exist. Both CD
+playback and the receiver start through `cdplayer.service` at boot; repository
+updates preserve the Spotify configuration. The initial source after boot is CD.
+
+The default Spotify output is the Pi headphone jack:
+
+```ini
+CDPLAYER_SPOTIFY_ENABLED=1
+CDPLAYER_SPOTIFY_BINARY="/usr/bin/librespot"
+CDPLAYER_SPOTIFY_NAME="Raspberry Pi CD Player"
+CDPLAYER_SPOTIFY_DEVICE="plughw:CARD=Headphones,DEV=0"
+```
+
+Use the **same ALSA output** as MPD. Change the device/name in that file if needed,
+then `sudo systemctl restart cdplayer`. The service has the `audio` group to open
+the output. To disable integration, set `CDPLAYER_SPOTIFY_ENABLED=0` and restart.
+No Spotify password or developer API key is needed; credentials are not cached.
+
+For foreground development, stop `cdplayer.service` and any standalone Raspotify
+service first, then run:
+
+```sh
+go run ./cmd/cdplayer -mpd 127.0.0.1:6600 -mpd-auto-device -spotify \
+  -spotify-device 'plughw:CARD=Headphones,DEV=0'
+```
+
+Keep the web interface enabled for the local handoff callback. The receiver
+binary and app executable must be accessible to the service account. Check
+`journalctl -u cdplayer -f` for receiver/audio errors. A crashed receiver retries
+after five seconds; it does not automatically resume the CD. USB drive power
+faults still need resolving separately.
+
+Hardware check after installation: play a CD, transfer Spotify to the Pi, check
+that the CD stops, pause Spotify and insert a disc (it should stay silent), then
+choose Switch to CD. Automated tests cover source transitions, failed handoffs,
+receiver restarts, and stale callback rejection; real Spotify playback requires
+verification on the Pi with your account and audio output.
