@@ -1,0 +1,118 @@
+package player
+
+import (
+	"context"
+	"errors"
+	"reflect"
+	"testing"
+
+	"github.com/gillzon/raspberry-pi-cdplayer/internal/disc"
+)
+
+type fakeDrive struct {
+	disc disc.Disc
+	err  error
+}
+
+func (d *fakeDrive) Read() (disc.Disc, error) { return d.disc, d.err }
+
+type fakeBackend struct {
+	fresh                           bool
+	connectErr, startErr, healthErr error
+	starts                          [][]int
+	clears                          int
+}
+
+func (b *fakeBackend) Connect(context.Context) (bool, error) {
+	fresh := b.fresh
+	b.fresh = false
+	return fresh, b.connectErr
+}
+func (b *fakeBackend) Start(tracks []int) error {
+	b.starts = append(b.starts, append([]int(nil), tracks...))
+	return b.startErr
+}
+func (b *fakeBackend) Clear() error         { b.clears++; return b.connectErr }
+func (b *fakeBackend) PlaybackError() error { return b.healthErr }
+
+func TestDiscLifecycle(t *testing.T) {
+	audio := disc.Disc{ID: "album", Tracks: []int{1, 2, 3}}
+	drive, backend := &fakeDrive{}, &fakeBackend{fresh: true}
+	c := &Controller{Drive: drive, Backend: backend}
+	step := func(d disc.Disc) {
+		t.Helper()
+		drive.disc = d
+		if err := c.Step(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	step(disc.Disc{}) // clean stale queue at boot
+	step(audio)
+	step(audio) // includes pause, manual stop, and natural album completion
+	if len(backend.starts) != 1 {
+		t.Fatal("unchanged disc restarted")
+	}
+	step(disc.Disc{}) // removal
+	step(audio)       // same disc reinserted
+	step(disc.Disc{ID: "data"})
+	step(disc.Disc{ID: "mixed", Tracks: []int{2, 3}})
+	if backend.clears != 3 {
+		t.Fatalf("clear count: %d", backend.clears)
+	}
+	if want := [][]int{{1, 2, 3}, {1, 2, 3}, {2, 3}}; !reflect.DeepEqual(backend.starts, want) {
+		t.Fatalf("starts = %v; want %v", backend.starts, want)
+	}
+}
+
+func TestBootWithDiscAndReconnect(t *testing.T) {
+	drive := &fakeDrive{disc: disc.Disc{ID: "album", Tracks: []int{1}}}
+	backend := &fakeBackend{fresh: true}
+	c := &Controller{Drive: drive, Backend: backend}
+	for i := 0; i < 2; i++ {
+		backend.fresh = true // first connection, then MPD restart
+		if err := c.Step(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(backend.starts) != 2 {
+		t.Fatalf("starts: %v", backend.starts)
+	}
+}
+
+func TestTransientFailures(t *testing.T) {
+	failure := errors.New("not ready")
+	drive := &fakeDrive{disc: disc.Disc{ID: "album", Tracks: []int{1}}}
+	backend := &fakeBackend{connectErr: failure}
+	c := &Controller{Drive: drive, Backend: backend}
+	if c.Step(context.Background()) == nil {
+		t.Fatal("missing connection error")
+	}
+	backend.connectErr, backend.startErr = nil, failure
+	if c.Step(context.Background()) == nil {
+		t.Fatal("missing start error")
+	}
+	backend.startErr = nil
+	if err := c.Step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	drive.err = failure
+	if c.Step(context.Background()) == nil {
+		t.Fatal("missing drive error")
+	}
+	drive.err = nil
+	if err := c.Step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(backend.starts) != 2 {
+		t.Fatalf("transient read restarted audio: %v", backend.starts)
+	}
+	backend.healthErr = errors.New("scratched disc")
+	for i := 0; i < 2; i++ {
+		if c.Step(context.Background()) == nil {
+			t.Fatal("missing playback error")
+		}
+	}
+	if len(backend.starts) != 2 {
+		t.Fatal("playback error caused restart loop")
+	}
+}

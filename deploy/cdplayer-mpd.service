@@ -1,0 +1,20 @@
+[Unit]
+Description=CD player audio engine
+After=sound.target
+
+[Service]
+Type=simple
+User=cdplayer
+Group=cdplayer
+SupplementaryGroups=audio cdrom
+StateDirectory=cdplayer-mpd
+ExecStartPre=/usr/bin/mkdir -p /var/lib/cdplayer-mpd/music
+ExecStart=/usr/bin/mpd --no-daemon /etc/cdplayer/mpd.conf
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

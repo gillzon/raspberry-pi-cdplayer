@@ -1,0 +1,20 @@
+[Unit]
+Description=Automatic audio CD player
+Wants=cdplayer-mpd.service
+After=cdplayer-mpd.service
+
+[Service]
+Type=simple
+User=cdplayer
+Group=cdplayer
+SupplementaryGroups=cdrom
+ExecStart=/usr/local/bin/cdplayer -device /dev/sr0 -mpd 127.0.0.1:6601
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=15
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
