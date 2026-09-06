@@ -22,6 +22,7 @@ type Client struct {
 	reader      *bufio.Scanner
 	dial        func(context.Context, string, string) (net.Conn, error)
 	requestedAt time.Time
+	lastStatus  map[string]string
 }
 
 // Connect returns true for a new session so the controller can restore the queue
@@ -49,6 +50,7 @@ func (c *Client) Connect(ctx context.Context) (bool, error) {
 }
 
 func (c *Client) Close() {
+	c.lastStatus = nil
 	if c.conn != nil {
 		c.conn.Close()
 		c.conn = nil
@@ -126,6 +128,7 @@ func (c *Client) PlaybackError() error {
 	if err != nil {
 		return err
 	}
+	c.lastStatus = status
 	if message := status["error"]; message != "" {
 		return fmt.Errorf("MPD playback: %s", message)
 	}
@@ -137,4 +140,30 @@ func (c *Client) PlaybackError() error {
 		}
 	}
 	return nil
+}
+
+// Status is used by the controller loop only; web handlers receive a copy.
+func (c *Client) Status() map[string]string { return c.lastStatus }
+
+func (c *Client) Control(action string, position int) error {
+	var command string
+	switch action {
+	case "play":
+		command = "play"
+	case "pause":
+		command = "pause 1"
+	case "stop":
+		command = "stop"
+	case "next", "previous":
+		command = action
+	case "track":
+		if position < 0 {
+			return fmt.Errorf("invalid track position")
+		}
+		command = fmt.Sprintf("play %d", position)
+	default:
+		return fmt.Errorf("unknown playback action")
+	}
+	_, err := c.command(command)
+	return err
 }

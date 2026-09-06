@@ -3,10 +3,14 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log/slog"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -14,13 +18,21 @@ import (
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/disc"
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/mpd"
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/player"
+	"github.com/gillzon/raspberry-pi-cdplayer/internal/web"
 )
+
+type controlRequest struct {
+	ctx     context.Context
+	command web.Command
+	result  chan error
+}
 
 func main() {
 	device := flag.String("device", "/dev/sr0", "CD drive device (absolute /dev path)")
 	address := flag.String("mpd", "127.0.0.1:6601", "dedicated MPD TCP address")
 	autoDevice := flag.Bool("mpd-auto-device", false, "let MPD select the CD drive (single-drive workaround for Bad track number)")
 	poll := flag.Duration("poll", time.Second, "disc polling interval")
+	httpAddress := flag.String("http", ":8080", "web interface address (empty disables it)")
 	flag.Parse()
 	if *poll < 100*time.Millisecond || !strings.HasPrefix(filepath.Clean(*device), "/dev/") || strings.ContainsAny(*device, "\r\n\"\\") || flag.NArg() != 0 {
 		slog.Error("use a /dev/ device path, no positional arguments, and a poll interval of at least 100ms")
@@ -34,10 +46,49 @@ func main() {
 	}
 	defer backend.Close()
 	controller := &player.Controller{Drive: &disc.Drive{Device: *device}, Backend: backend}
+	commands := make(chan controlRequest)
+	website := &web.Server{Control: func(ctx context.Context, cmd web.Command) error {
+		request := controlRequest{ctx: ctx, command: cmd, result: make(chan error, 1)}
+		select {
+		case commands <- request:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		select {
+		case err := <-request.result:
+			return err
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}}
+	website.Set(web.State{Device: *device, Error: "Starting player"})
+	if *httpAddress != "" {
+		listener, err := net.Listen("tcp", *httpAddress)
+		if err != nil {
+			slog.Error("start web interface", "error", err)
+			return
+		}
+		server := &http.Server{Handler: website.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second}
+		defer server.Close()
+		go func() {
+			if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
+				slog.Error("web interface stopped", "error", err)
+				cancel()
+			}
+		}()
+		slog.Info("web interface listening", "address", listener.Addr())
+	}
 	ticker := time.NewTicker(*poll)
 	defer ticker.Stop()
 	slog.Info("CD player starting", "device", *device, "mpd", *address)
 	lastError := ""
+	publish := func(err error) {
+		state := web.State{Device: *device, Disc: controller.Disc(), MPD: backend.Status(), Updated: time.Now()}
+		if err != nil {
+			state.Error = err.Error()
+		}
+		website.Set(state)
+	}
 	for {
 		err := controller.Step(ctx)
 		if err != nil {
@@ -49,7 +100,25 @@ func main() {
 			slog.Info("CD player recovered")
 			lastError = ""
 		}
+		publish(err)
 		select {
+		case request := <-commands:
+			err := request.ctx.Err()
+			position := -1
+			if err == nil && request.command.Action == "track" {
+				position = slices.Index(controller.Disc().Tracks, request.command.Track)
+				if position < 0 {
+					err = fmt.Errorf("track is not on the current disc")
+				}
+			}
+			if err == nil {
+				err = backend.Control(request.command.Action, position)
+			}
+			if err == nil {
+				err = backend.PlaybackError()
+			}
+			publish(err)
+			request.result <- err
 		case <-ctx.Done():
 			if err := backend.Clear(); err != nil {
 				slog.Warn("could not stop MPD on shutdown", "error", err)

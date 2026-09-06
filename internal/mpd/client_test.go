@@ -170,3 +170,25 @@ func TestReconnectAfterDisconnect(t *testing.T) {
 		t.Fatalf("connection attempts: %d", attempts)
 	}
 }
+
+func TestPlaybackControls(t *testing.T) {
+	c, done := serve(t, func(string) string { return "OK\n" })
+	if _, err := c.Connect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, action := range []string{"play", "pause", "stop", "next", "previous", "track"} {
+		if err := c.Control(action, 2); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := c.Control("track", -1); err == nil {
+		t.Fatal("negative position accepted")
+	}
+	if err := c.Control("clear", 0); err == nil {
+		t.Fatal("unlisted action accepted")
+	}
+	c.Close()
+	if got, want := <-done, []string{"play", "pause 1", "stop", "next", "previous", "play 2"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("commands: %v", got)
+	}
+}

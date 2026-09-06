@@ -18,10 +18,11 @@ type Backend interface {
 }
 
 type Controller struct {
-	Drive   Drive
-	Backend Backend
-	current string
-	ready   bool
+	Drive    Drive
+	Backend  Backend
+	current  string
+	ready    bool
+	observed disc.Disc
 }
 
 // Step is called immediately at startup and periodically thereafter. Failed
@@ -36,6 +37,7 @@ func (c *Controller) Step(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	c.observed = d
 	fresh, err := c.Backend.Connect(ctx)
 	if err != nil {
 		return err
@@ -65,3 +67,5 @@ func (c *Controller) Step(ctx context.Context) error {
 	}
 	return c.Backend.PlaybackError()
 }
+
+func (c *Controller) Disc() disc.Disc { return c.observed }

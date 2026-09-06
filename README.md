@@ -26,7 +26,32 @@ ready, so routine polls only check drive status instead of reading every track
 again during audio extraction. Removal, disconnection, or a not-ready state
 invalidates the cache.
 
-The screen, artwork, track titles, physical buttons, and ripping are later milestones.
+Artwork, track titles, physical buttons, and ripping are later milestones.
+
+## Browser interface
+
+The app also serves a small web page on port **8080**, with no login. From a
+device on the same network, open `http://raspberrypi.local:8080` or
+`http://<Pi-IP-address>:8080` (find the address with `hostname -I` on the Pi).
+
+For your system MPD instance and the single-drive URL workaround:
+
+```sh
+go run ./cmd/cdplayer -mpd 127.0.0.1:6600 -mpd-auto-device
+```
+
+The page shows disc presence, audio track numbers, playback state, elapsed/total
+track time, and the latest player error. Click a track to play it, or use Play,
+Pause, Stop, Previous, and Next. Album and song names are not looked up yet.
+Status refreshes once per second from memory; browser requests never scan the
+disc. If the player loop stalls, the page marks the status as delayed and
+control requests time out instead of waiting indefinitely.
+
+Use `-http :8090` to change the port or `-http ""` to disable the web interface.
+The default `:8080` listens on all network interfaces. The existing systemd
+service also enables the web page once you install the updated binary and
+restart it. HTML, CSS, and JavaScript are embedded in the binary with no external
+assets or JavaScript dependencies.
 
 ## Hardware and OS
 

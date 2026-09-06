@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CD player</title>
+<style>
+:root{color-scheme:dark;font:17px system-ui,sans-serif;background:#131817;color:#e8eee9}body{max-width:640px;margin:40px auto;padding:0 20px}h1{font-size:2rem;margin-bottom:8px}.muted{color:#a8b7ae}section{background:#202925;border:1px solid #35473d;border-radius:14px;padding:22px;margin:22px 0}button{font:inherit;background:#30493b;color:inherit;border:1px solid #54745e;border-radius:9px;padding:12px 16px;cursor:pointer}button:hover,button[aria-current=true]{background:#476d53}button:disabled{opacity:.45;cursor:wait}.controls{display:flex;gap:8px;flex-wrap:wrap}#tracks{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px}#error,#commandError{color:#ffb8a5;white-space:pre-wrap}progress{width:100%;accent-color:#9ed6ad}#now{font-size:1.5rem}small{overflow-wrap:anywhere}
+</style>
+<h1>CD player</h1><div id="connection" class="muted" role="status">Connecting…</div>
+<section><div id="now">Waiting for status</div><p id="disc" class="muted"></p><progress id="progress" value="0" max="1"></progress><p id="time">0:00 / 0:00</p>
+<div class="controls"><button data-action="previous">Previous</button><button data-action="play">Play</button><button data-action="pause">Pause</button><button data-action="stop">Stop</button><button data-action="next">Next</button></div>
+<p id="error" role="status"></p><p id="commandError" role="alert"></p></section>
+<h2>Tracks</h2><div id="tracks"></div><p class="muted"><small id="details"></small></p>
+<script>
+const $=id=>document.getElementById(id);
+const duration=n=>{n=Math.max(0,Math.floor(Number(n)||0));return Math.floor(n/60)+':'+String(n%60).padStart(2,'0')};
+let trackKey='',busy=false;
+async function refresh(){
+ try{
+  const response=await fetch('/api/status',{signal:AbortSignal.timeout(4000)});
+  if(!response.ok)throw new Error('Status unavailable');
+  const s=await response.json(),m=s.mpd||{},tracks=s.disc.Tracks||[];
+  const stale=!s.updated||Date.now()-Date.parse(s.updated)>5000;
+  $('connection').textContent=stale?'Status delayed — player may be busy':'Connected · updated '+new Date(s.updated).toLocaleTimeString();
+  const position=m.song===undefined?-1:Number(m.song),track=tracks[position];
+  $('now').textContent=({play:'Playing',pause:'Paused',stop:'Stopped'}[m.state]||'Player unavailable')+(track?' · Track '+track:'');
+  $('disc').textContent=s.disc.ID?(tracks.length?tracks.length+' audio tracks':'No audio tracks'):'No disc detected';
+  $('time').textContent=duration(m.elapsed)+' / '+duration(m.duration);
+  $('progress').max=Number(m.duration)||1;$('progress').value=Number(m.elapsed)||0;
+  $('error').textContent=s.error||m.error||'';
+  $('details').textContent=s.device+(s.disc.ID?' · Disc '+s.disc.ID.slice(0,12):'');
+  const key=JSON.stringify(tracks);
+  if(key!==trackKey){$('tracks').replaceChildren(...tracks.map(n=>{const b=document.createElement('button');b.textContent='Track '+n;b.dataset.track=n;b.onclick=()=>control('track',n);return b}));trackKey=key}
+  document.querySelectorAll('[data-track]').forEach(b=>b.setAttribute('aria-current',Number(b.dataset.track)===track?'true':'false'));
+  document.querySelectorAll('button').forEach(b=>b.disabled=busy||stale||(!tracks.length&&b.dataset.action!=='stop'));
+ }catch(e){$('connection').textContent='Cannot reach player — retrying…';document.querySelectorAll('button').forEach(b=>b.disabled=true)}
+}
+async function control(action,track){
+ busy=true;document.querySelectorAll('button').forEach(b=>b.disabled=true);$('commandError').textContent='';
+ try{const r=await fetch('/api/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,track}),signal:AbortSignal.timeout(10000)});if(!r.ok)throw new Error(await r.text())}
+ catch(e){$('commandError').textContent=e.message}
+ finally{busy=false;await refresh()}
+}
+document.querySelectorAll('[data-action]').forEach(b=>b.onclick=()=>control(b.dataset.action));
+async function poll(){await refresh();setTimeout(poll,1000)}poll();
+</script>
+</html>
