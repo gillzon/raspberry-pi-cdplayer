@@ -3,6 +3,7 @@
 import ctypes as C
 import ctypes.util
 import json
+import faulthandler
 import os
 import signal
 import struct
@@ -10,6 +11,7 @@ import sys
 
 
 def main():
+    faulthandler.enable()
     # Do not leave a reader running after an unexpected Go process exit.
     parent = os.getppid()
     if sys.platform.startswith('linux'):
@@ -47,7 +49,7 @@ def main():
     if sys.argv[1] == '--check':
         print('Persistent CD reader dependencies available')
         return
-    drive = identify(sys.argv[1].encode(), 0, None)
+    drive = identify(sys.argv[1].encode(), 1, None)
     if not drive:
         raise RuntimeError('cannot identify CD drive ' + sys.argv[1])
     para = None
@@ -57,8 +59,9 @@ def main():
         layout = json.loads(sys.argv[2])
         for t in layout:
             n = t['number']
-            if not is_audio(drive, n) or first(drive, n) != t['start'] or last(drive, n) + 1 != t['end']:
-                raise RuntimeError('disc layout changed while opening reader')
+            actual_start, actual_end = first(drive, n), last(drive, n) + 1
+            if not is_audio(drive, n) or actual_start != t['start'] or actual_end != t['end']:
+                raise RuntimeError(f"track {n} layout mismatch: expected {t['start']}..{t['end']}, reader reported {actual_start}..{actual_end}")
         para = init(drive)
         if not para:
             raise RuntimeError('cannot initialize CD reader')

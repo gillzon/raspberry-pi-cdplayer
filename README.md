@@ -19,7 +19,13 @@ before the full track is cached; no internet or mounted CD filesystem is needed.
 - Preserve manual pause/stop and stop at the end of the album without looping.
 - Report asynchronous playback failures, such as read errors or unavailable audio
   output. These do not trigger an endless restart loop; fix the cause and use
-  `mpc play`, reinsert the disc, or restart the service.
+  Play in the web UI, reinsert the disc, or restart the service. Web Play also
+  retries a failed audio-cache reader.
+
+Cached playback waits for the reader to validate the disc layout and produce
+audio before queuing tracks. If startup fails, the UI reports the helper's
+diagnostic and exit status. A `layout mismatch` includes the track number and
+expected/actual sector boundaries; include that full message when reporting it.
 
 Spin-up and table-of-contents reading add hardware-dependent delay. There is no
 fixed insertion-to-sound guarantee yet. A removal/reinsertion entirely between

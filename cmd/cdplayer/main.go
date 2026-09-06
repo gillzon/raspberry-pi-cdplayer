@@ -130,7 +130,10 @@ func main() {
 			for _, t := range d.Layout {
 				layout = append(layout, audio.Layout{Number: t.Number, Start: t.Start, End: t.End})
 			}
-			return audioCache.Observe(d.ID, drive.DevicePath(), layout)
+			if err := audioCache.Observe(d.ID, drive.DevicePath(), layout); err != nil {
+				return err
+			}
+			return audioCache.Ready()
 		}
 		controller.Release = audioCache.Close
 		drive.SetObserver(func(d disc.Disc, err error) {
@@ -267,6 +270,12 @@ func main() {
 					}
 				} else if controller.Source() != "cd" {
 					err = fmt.Errorf("select Switch to CD first")
+				} else if audioCache != nil && request.command.Action == "play" && audioCache.Status().Error != "" {
+					// Manual Play retries the reader instead of replaying broken URLs.
+					audioCache.Close()
+					controller.UseCD()
+				} else if audioCache != nil && request.command.Action != "stop" && audioCache.Ready() != nil {
+					err = audioCache.Ready()
 				} else {
 
 					err = backend.Control(request.command.Action, position)

@@ -2,6 +2,7 @@ package player
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -66,6 +67,14 @@ func (c *Controller) Step(ctx context.Context) error {
 	}
 	if c.Prepare != nil {
 		if err := c.Prepare(d); err != nil {
+			if c.ready {
+				// Stop a playlist whose audio source failed. Retain ready on a
+				// failed clear so the next Step retries releasing MPD.
+				if clearErr := c.Backend.Clear(); clearErr != nil {
+					return errors.Join(err, clearErr)
+				}
+				c.ready = false
+			}
 			return err
 		}
 	}

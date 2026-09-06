@@ -346,3 +346,29 @@ func TestSpotifyDisconnectWaitsForManualCDStart(t *testing.T) {
 		t.Fatal("new Spotify session stayed idle")
 	}
 }
+
+func TestPrepareFailureDoesNotQueueAndStopsFailedSource(t *testing.T) {
+	b := &fakeBackend{}
+	prepareErr := errors.New("reader layout mismatch")
+	c := &Controller{Drive: &fakeDrive{disc: disc.Disc{ID: "disc", Tracks: []int{1, 2}}}, Backend: b,
+		Prepare: func(disc.Disc) error { return prepareErr }}
+	if err := c.Step(context.Background()); err != prepareErr {
+		t.Fatalf("lost error: %v", err)
+	}
+	if len(b.starts) != 0 {
+		t.Fatal("queued unavailable audio")
+	}
+	prepareErr = nil
+	if err := c.Step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	prepareErr = errors.New("reader failed during playback")
+	for i := 0; i < 2; i++ {
+		if err := c.Step(context.Background()); err != prepareErr {
+			t.Fatalf("lost error: %v", err)
+		}
+	}
+	if b.clears != 1 || len(b.starts) != 1 {
+		t.Fatalf("failed source replayed: clears=%d starts=%d", b.clears, len(b.starts))
+	}
+}

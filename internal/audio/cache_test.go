@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"net/http/httptest"
 	"strings"
@@ -169,5 +170,23 @@ func TestReaderErrorPropagatesWithoutInventedAudio(t *testing.T) {
 	}
 	if !strings.Contains(c.Status().Error, "unexpected EOF") {
 		t.Fatal("missing error status")
+	}
+}
+
+func TestReadyWaitsForAudioAndReportsFailure(t *testing.T) {
+	c, r, s := setupCache(t)
+	nextRead(t, r)
+	if c.Ready() != ErrPreparing {
+		t.Fatal("ready before audio exists")
+	}
+	r.allow <- struct{}{}
+	nextRead(t, r)
+	if err := c.Ready(); err != nil {
+		t.Fatalf("audio not ready: %v", err)
+	}
+	failure := fmt.Errorf("track 13 layout mismatch: expected 100..200, reader reported 100..150")
+	s.fail(failure)
+	if c.Ready() != failure {
+		t.Fatal("reader failure hidden")
 	}
 }

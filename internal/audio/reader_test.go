@@ -6,7 +6,9 @@ import (
 	"encoding/binary"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -31,6 +33,14 @@ func TestRealReaderSeeksCDImageWithoutReopening(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	bad, err := openReader(ctx, cue, []Layout{{1, 0, 151}, {2, 150, 300}})
+	if err == nil {
+		bad.Close()
+		t.Fatal("accepted a changed disc layout")
+	}
+	if !strings.Contains(err.Error(), "expected 0..151, reader reported 0..150") {
+		t.Fatalf("missing track boundary diagnostic: %v", err)
+	}
 	r, err := openReader(ctx, cue, []Layout{{1, 0, 150}, {2, 150, 300}})
 	if err != nil {
 		t.Fatal(err)
@@ -69,5 +79,32 @@ func TestCacheStorageLockAndCrashCleanup(t *testing.T) {
 	if err := second.Init(); err == nil {
 		second.Shutdown()
 		t.Fatal("two processes may share cache")
+	}
+}
+
+func TestStartupErrorIncludesHelperDiagnostic(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 unavailable")
+	}
+	_, err := openReaderProgram(context.Background(), "/dev/fake", nil, "import sys; print('CD reader: permission denied opening drive',file=sys.stderr); sys.exit(7)")
+	if err == nil || !strings.Contains(err.Error(), "permission denied opening drive") || !strings.Contains(err.Error(), "exit status 7") {
+		t.Fatalf("lost helper failure: %v", err)
+	}
+}
+func TestStartupSignalIsNotHiddenByCancellation(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 unavailable")
+	}
+	_, err := openReaderProgram(context.Background(), "/dev/fake", nil, "import os,signal; os.kill(os.getpid(),signal.SIGTERM)")
+	if err == nil || !strings.Contains(err.Error(), "signal: terminated") {
+		t.Fatalf("lost process signal: %v", err)
+	}
+}
+func TestDiagnosticTailBounded(t *testing.T) {
+	d := &diagnosticTail{}
+	d.Write(bytes.Repeat([]byte("x"), 10000))
+	d.Write([]byte(" final error"))
+	if len(d.String()) > 8192 || !strings.HasSuffix(d.String(), "final error") {
+		t.Fatal("diagnostic tail lost error or exceeded limit")
 	}
 }

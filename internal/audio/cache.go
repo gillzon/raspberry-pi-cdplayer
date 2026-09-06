@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -21,6 +22,8 @@ import (
 
 const sectorBytes = 2352
 const blockSectors = 75
+
+var ErrPreparing = errors.New("preparing CD audio reader")
 
 type track struct {
 	layout Layout
@@ -144,6 +147,26 @@ func (c *Cache) Close() {
 		c.session = nil
 	}
 	c.mu.Unlock()
+}
+
+// Ready prevents publishing a playlist until the reader has validated the TOC
+// and produced audio. A failed session remains failed until explicitly retried.
+func (c *Cache) Ready() error {
+	c.mu.Lock()
+	s := c.session
+	c.mu.Unlock()
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.err != nil {
+		return s.err
+	}
+	if s.cached == 0 {
+		return ErrPreparing
+	}
+	return nil
 }
 func (c *Cache) TrackURL(number int) string {
 	c.mu.Lock()
