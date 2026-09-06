@@ -610,13 +610,14 @@ This checks the runtime libraries without opening the drive. For a foreground
 run: `go run ./cmd/cdplayer -mpd 127.0.0.1:6600` (stop the boot service first).
 
 To experiment with a lower reading speed, add `-cd-speed 4` for a 4× request.
-The default, `-cd-speed 0`, leaves speed selection to the drive. This option
+Without a flag, `-cd-speed 0` leaves speed selection to the drive. The supplied
+boot services explicitly use `-cd-speed 4`; `bash scripts/update.sh` installs
+that setting for subsequent starts and reboots. This option
 applies to cached audio only, after libcdio opens and initializes the drive.
 The helper logs whether the request was accepted or rejected; acceptance does
 not measure actual speed or current. It cannot control the initial spin-up
 acceleration or guarantee operation within the Pi's USB power budget. A lower
-speed can also slow cache filling. The setting must be included in the service's
-ExecStart if desired at boot; a foreground test does not change the service.
+speed can also slow cache filling. A foreground test does not change the service.
 
 - One helper owns the digital audio-reading session and seeks within that
   session instead of reopening the drive for each MPD track URL. By default,
