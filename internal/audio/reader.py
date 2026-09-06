@@ -39,6 +39,7 @@ def main():
     identify = fn('cdio_cddap_identify', C.c_void_p, C.c_char_p, C.c_int, C.c_void_p)
     open_drive = fn('cdio_cddap_open', C.c_int, C.c_void_p)
     close_drive = fn('cdio_cddap_close', C.c_int, C.c_void_p)
+    set_speed = fn('cdio_cddap_speed_set', C.c_int, C.c_void_p, C.c_int)
     paraname = ctypes.util.find_library('cdio_paranoia')
     if not paraname:
         raise RuntimeError('libcdio_paranoia missing; install the libcdio-paranoia runtime package')
@@ -65,6 +66,13 @@ def main():
     try:
         if open_drive(drive) != 0:
             raise RuntimeError('cannot open CD drive ' + sys.argv[1])
+        speed = globals().get('CD_READ_SPEED', 0)
+        if speed > 0:
+            result = set_speed(drive, speed)
+            if result != 0:
+                print(f'CD reader: WARNING: drive rejected {speed}x read speed (code {result}); using drive-selected speed', file=sys.stderr, flush=True)
+            else:
+                print(f'CD reader: drive accepted {speed}x read-speed request; actual speed and current are not measured', file=sys.stderr, flush=True)
         layout = json.loads(sys.argv[2])
         for t in layout:
             n = t['number']

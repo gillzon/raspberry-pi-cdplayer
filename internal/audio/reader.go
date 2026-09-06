@@ -50,11 +50,22 @@ func openReader(ctx context.Context, device string, layout []Layout) (Reader, er
 // ReaderWithVerification enables extra overlapping reads and software repair.
 // The default reader favours playback latency over extraction verification.
 func ReaderWithVerification(verify bool) OpenReader {
-	if !verify {
-		return openReader
-	}
+	return ReaderWithOptions(verify, 0)
+}
+
+// ReaderWithOptions optionally requests a CD read-speed multiplier. This is
+// not a current limit or a motor acceleration control; firmware may reject it.
+func ReaderWithOptions(verify bool, speed int) OpenReader {
 	return func(ctx context.Context, device string, layout []Layout) (Reader, error) {
-		return openReaderProgram(ctx, device, layout, "VERIFY_AUDIO = True\n"+readerProgram)
+		if speed < 0 || int64(speed) > 2147483647 {
+			return nil, fmt.Errorf("invalid CD read speed %d", speed)
+		}
+		verification := "False"
+		if verify {
+			verification = "True"
+		}
+		program := fmt.Sprintf("VERIFY_AUDIO = %s\nCD_READ_SPEED = %d\n", verification, speed) + readerProgram
+		return openReaderProgram(ctx, device, layout, program)
 	}
 }
 

@@ -37,6 +37,7 @@ func main() {
 	checkAudio := flag.Bool("check-audio", false, "check persistent CD reader dependencies without opening the drive")
 	cachedAudio := flag.Bool("audio-cache", true, "read CD once in the background and serve cached WAV audio to local MPD")
 	verifyAudio := flag.Bool("audio-verify", false, "enable slower software audio verification and repair for difficult discs")
+	cdSpeed := flag.Int("cd-speed", 0, "request CD read speed multiplier for cached audio, e.g. 4 (0 leaves drive default; not a current limit)")
 	autoDevice := flag.Bool("mpd-auto-device", false, "let MPD select the CD drive (single-drive workaround for Bad track number)")
 	poll := flag.Duration("poll", time.Second, "disc polling interval")
 	httpAddress := flag.String("http", ":8080", "web interface address (empty disables it)")
@@ -50,6 +51,10 @@ func main() {
 	spotifyName := flag.String("spotify-name", envDefault("CDPLAYER_SPOTIFY_NAME", "Raspberry Pi CD Player"), "Spotify Connect device name")
 	spotifyEvent := flag.Bool("spotify-event", false, "internal Spotify sink handoff hook")
 	flag.Parse()
+	if *cdSpeed < 0 || int64(*cdSpeed) > 2147483647 {
+		slog.Error("cd-speed must be a nonnegative 32-bit integer")
+		os.Exit(2)
+	}
 	if *checkAudio {
 		if err := audio.Check(); err != nil {
 			slog.Error("audio dependencies", "error", err)
@@ -109,7 +114,7 @@ func main() {
 		if *cacheDir != "" {
 			root = filepath.Join(*cacheDir, "audio")
 		}
-		audioCache = &audio.Cache{Root: root, BaseURL: "http://" + audioListener.Addr().String(), Open: audio.ReaderWithVerification(*verifyAudio)}
+		audioCache = &audio.Cache{Root: root, BaseURL: "http://" + audioListener.Addr().String(), Open: audio.ReaderWithOptions(*verifyAudio, *cdSpeed)}
 		if err := audioCache.Init(); err != nil {
 			audioListener.Close()
 			slog.Error("initialize audio cache", "error", err)
