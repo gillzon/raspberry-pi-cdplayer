@@ -60,6 +60,69 @@ Status refreshes once per second from memory; browser requests never scan the
 disc. If the player loop stalls, the page marks the status as delayed and
 control requests time out instead of waiting indefinitely.
 
+Rapid Next/Previous clicks are combined: the page previews the selected track,
+waits 350 ms after the last click, then sends one track selection. For example,
+three Next clicks on track 1 jump directly to track 4. Other playback controls
+cancel a pending selection; track changes stop at the first/last audio track.
+
+## Start automatically with your existing system MPD
+
+For a configured Pi, the update script performs the pull, build, installation,
+and boot setup in one command. From your checkout, run as your normal user:
+
+```sh
+bash scripts/update.sh
+```
+
+It pulls the current branch's upstream using `git pull --ff-only`, tests and
+builds the code, installs the compiled binary and the system-MPD service variant,
+enables both services at boot, and restarts the app. MPD keeps your existing
+`/etc/mpd.conf` and audio output settings. This uses port 6600, `/dev/sr0`, and
+the single-drive `-mpd-auto-device` workaround. The script requests sudo only
+for installation. Stop a manually running `go run` with Ctrl+C first.
+
+The script requires a clean checkout and does not discard local changes. Pull
+or build failures leave the installed version running. It saves the previous
+binary as `/usr/local/bin/cdplayer.previous` before replacing it. If the new
+service fails, inspect `journalctl -u cdplayer -n 50 --no-pager`; the script
+reports failure rather than claiming the update succeeded.
+
+Run the same command whenever you want to update. **Boot starts the installed
+app; it does not run git pull or rebuild**, so playback at boot does not depend
+on internet access. Git, Go, sudo, flock (util-linux), and a working system MPD
+installation must already be available. The script itself must have reached
+your Pi's checkout before you can run it the first time.
+
+If playback already works with `-mpd 127.0.0.1:6600 -mpd-auto-device`, use the
+service variant below. It keeps using your working `/etc/mpd.conf`, including
+the ALSA output you configured. Run these commands **on the Pi**, from the
+updated project directory. Stop any foreground `go run` with Ctrl+C first.
+
+```sh
+go build -o bin/cdplayer ./cmd/cdplayer
+id cdplayer >/dev/null 2>&1 || sudo useradd --system --user-group --no-create-home --shell /usr/sbin/nologin cdplayer
+sudo usermod -aG cdrom mpd
+sudo install -m 0755 bin/cdplayer /usr/local/bin/cdplayer
+sudo install -m 0644 deploy/cdplayer-system-mpd.service /etc/systemd/system/cdplayer.service
+sudo systemctl daemon-reload
+sudo systemctl enable mpd.service cdplayer.service
+sudo systemctl restart mpd.service cdplayer.service
+```
+
+This launches the compiled app on every boot without a login, starts MPD first,
+and gives the Go app drive permissions and a writable album cache. You do not
+need to run `go run` again. The web interface remains on port 8080. Check it with:
+
+```sh
+systemctl status cdplayer --no-pager
+journalctl -u cdplayer -f
+```
+
+To install future code updates, rebuild, reinstall the binary with the same
+`sudo install` command, then run `sudo systemctl restart cdplayer`. Use this
+variant or the dedicated MPD setup below; only one Go controller should run.
+The auto-device workaround assumes one connected CD drive.
+
 Use `-http :8090` to change the port or `-http ""` to disable the web interface.
 The default `:8080` listens on all network interfaces. The existing systemd
 service also enables the web page once you install the updated binary and
@@ -295,6 +358,7 @@ Parser sources: [MPD 0.24.5](https://github.com/MusicPlayerDaemon/MPD/blob/v0.24
 ```sh
 go test -race ./...
 go vet ./...
+node --test internal/web/navigation.test.cjs
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o bin/cdplayer-arm64 ./cmd/cdplayer
 CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -o bin/cdplayer-armv7 ./cmd/cdplayer
 ```

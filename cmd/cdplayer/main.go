@@ -119,6 +119,9 @@ func main() {
 		case request := <-commands:
 			err := request.ctx.Err()
 			position := -1
+			if err == nil && request.command.DiscID != "" && request.command.DiscID != controller.Disc().ID {
+				err = fmt.Errorf("disc changed; select a track on the current disc")
+			}
 			if err == nil && request.command.Action == "track" {
 				position = slices.Index(controller.Disc().Tracks, request.command.Track)
 				if position < 0 {

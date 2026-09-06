@@ -21,6 +21,9 @@ import (
 //go:embed index.html
 var page []byte
 
+//go:embed navigation.js
+var navigation []byte
+
 type State struct {
 	Device   string            `json:"device"`
 	Disc     disc.Disc         `json:"disc"`
@@ -33,6 +36,7 @@ type State struct {
 type Command struct {
 	Action string `json:"action"`
 	Track  int    `json:"track"`
+	DiscID string `json:"disc_id"`
 }
 
 type Server struct {
@@ -53,6 +57,11 @@ func (s *Server) Set(state State) {
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /navigation.js", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Write(navigation)
+	})
 	mux.HandleFunc("GET /api/art/{id}", func(w http.ResponseWriter, r *http.Request) {
 		if s.Metadata == nil {
 			http.NotFound(w, r)

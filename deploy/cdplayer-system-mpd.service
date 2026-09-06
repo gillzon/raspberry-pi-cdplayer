@@ -1,0 +1,22 @@
+[Unit]
+Description=Automatic CD player using the system MPD instance
+Wants=mpd.service
+After=mpd.service
+
+[Service]
+Type=simple
+User=cdplayer
+Group=cdplayer
+SupplementaryGroups=cdrom
+CacheDirectory=cdplayer
+Environment=XDG_CACHE_HOME=/var/cache
+ExecStart=/usr/local/bin/cdplayer -device /dev/sr0 -mpd 127.0.0.1:6600 -mpd-auto-device
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=15
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

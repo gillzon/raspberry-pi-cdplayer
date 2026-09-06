@@ -15,7 +15,7 @@
 <div class="album"><div class="cover"><img id="coverArt" alt="Album cover" hidden><span id="coverPlaceholder" class="muted">No artwork</span></div><div><h2 id="albumTitle">Unknown album</h2><p id="albumArtist" class="muted">Unknown artist</p><small id="metadataStatus" class="muted"></small><p><a id="albumSource" hidden target="_blank" rel="noopener" style="color:#9ed6ad">MusicBrainz</a></p></div></div>
 <section><div id="now">Waiting for status</div><p id="disc" class="muted"></p><progress id="progress" value="0" max="1"></progress><p id="time">0:00 / 0:00</p>
 <div class="controls"><button data-action="previous">Previous</button><button data-action="play">Play</button><button data-action="pause">Pause</button><button data-action="stop">Stop</button><button data-action="next">Next</button><button data-action="eject">Eject</button></div>
-<p id="error" role="status"></p><p id="commandError" role="alert"></p></section>
+<p id="selection" class="muted" role="status"></p><p id="error" role="status"></p><p id="commandError" role="alert"></p></section>
 <h2>Tracks</h2><div id="tracks"></div><p class="muted"><small id="details"></small></p>
 </div>
 <div id="systemPanel" role="tabpanel" aria-labelledby="systemTab" hidden>
@@ -29,10 +29,12 @@
 <section><dl><dt>Hostname</dt><dd id="hostname">—</dd><dt>Model</dt><dd id="model">—</dd><dt>Architecture / CPU cores</dt><dd id="architecture">—</dd></dl></section>
 <p class="muted">Updates every two seconds. Unavailable sensors show “Unavailable”. Memory use excludes memory Linux can reclaim.</p>
 </div>
+<script src="/navigation.js"></script>
 <script>
 const $=id=>document.getElementById(id);
 const duration=n=>{n=Math.max(0,Math.floor(Number(n)||0));return Math.floor(n/60)+':'+String(n%60).padStart(2,'0')};
 let trackKey='',busy=false,coverURL='';
+const navigation=new TrackNavigation((track,discID)=>control('track',track,discID),track=>{$('selection').textContent=track===null?'':'Selecting track '+track+'…'});
 $('coverArt').onerror=()=>{$('coverArt').hidden=true;$('coverPlaceholder').hidden=false};
 $('coverArt').onload=()=>{$('coverArt').hidden=false;$('coverPlaceholder').hidden=true};
 async function refresh(){
@@ -43,6 +45,8 @@ async function refresh(){
   const stale=!s.updated||Date.now()-Date.parse(s.updated)>5000;
   $('connection').textContent=stale?'Status delayed — player may be busy':'Connected · updated '+new Date(s.updated).toLocaleTimeString();
   const position=m.song===undefined?-1:Number(m.song),track=tracks[position];
+  navigation.update(s.disc.ID,tracks,position);
+  if(stale)navigation.cancel();
   const meta=s.metadata||{},names=meta.tracks||{},song=names[track];
   $('albumTitle').textContent=meta.album||(s.disc.ID?'Unknown album':'Insert a CD');
   $('albumArtist').textContent=meta.artist||(s.disc.ID?'Unknown artist':'');
@@ -60,15 +64,17 @@ async function refresh(){
   if(key!==trackKey){$('tracks').replaceChildren(...tracks.map(n=>{const b=document.createElement('button');b.textContent=names[n]?.title?n+'. '+names[n].title+(names[n].artist?' · '+names[n].artist:''):'Track '+n;b.dataset.track=n;b.onclick=()=>control('track',n);return b}));trackKey=key}
   document.querySelectorAll('[data-track]').forEach(b=>b.setAttribute('aria-current',Number(b.dataset.track)===track?'true':'false'));
   document.querySelectorAll('[data-action],[data-track]').forEach(b=>b.disabled=busy||stale||(!tracks.length&&!['stop','eject'].includes(b.dataset.action)));
- }catch(e){$('connection').textContent='Cannot reach player — retrying…';document.querySelectorAll('[data-action],[data-track]').forEach(b=>b.disabled=true)}
+ }catch(e){navigation.cancel();$('connection').textContent='Cannot reach player — retrying…';document.querySelectorAll('[data-action],[data-track]').forEach(b=>b.disabled=true)}
 }
-async function control(action,track){
+async function control(action,track,discID){
+ if(busy)return;
+ navigation.cancel();
  busy=true;document.querySelectorAll('[data-action],[data-track]').forEach(b=>b.disabled=true);$('commandError').textContent='';
- try{const r=await fetch('/api/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,track}),signal:AbortSignal.timeout(10000)});if(!r.ok)throw new Error(await r.text())}
+ try{const r=await fetch('/api/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,track,disc_id:discID}),signal:AbortSignal.timeout(10000)});if(!r.ok)throw new Error(await r.text())}
  catch(e){$('commandError').textContent=e.message}
  finally{busy=false;await refresh()}
 }
-document.querySelectorAll('[data-action]').forEach(b=>b.onclick=()=>control(b.dataset.action));
+document.querySelectorAll('[data-action]').forEach(b=>b.onclick=()=>{if(busy)return;const action=b.dataset.action;if(action==='next'||action==='previous'){navigation.step(action==='next'?1:-1)}else{control(action)}});
 const tabs=[...document.querySelectorAll('[data-tab]')];
 function selectTab(tab){tabs.forEach(b=>{const active=b===tab;b.setAttribute('aria-selected',String(active));b.tabIndex=active?0:-1;$(b.dataset.tab).hidden=!active})}
 tabs.forEach((tab,i)=>{tab.onclick=()=>selectTab(tab);tab.onkeydown=e=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(e.key)){e.preventDefault();const target=tabs[e.key==='Home'?0:e.key==='End'?tabs.length-1:(i+(e.key==='ArrowRight'?1:tabs.length-1))%tabs.length];selectTab(target);target.focus()}}});
