@@ -259,6 +259,27 @@ func (s *session) run(device string, layout []Layout, open OpenReader) {
 			}
 		}
 		if target == nil {
+			// Build a cushion before seeking away, then prepare adjacent track
+			// starts so Next/Previous can begin from disk while the drive seeks.
+			// Live stream demand above always wins over this speculative work.
+			candidates := []struct{ index, blocks int }{{s.selected, 30}, {s.selected + 1, 10}, {s.selected - 1, 10}}
+			for _, candidate := range candidates {
+				if candidate.index < 0 || candidate.index >= len(s.tracks) {
+					continue
+				}
+				t := s.tracks[candidate.index]
+				for n := 0; n < min(candidate.blocks, len(t.ready)); n++ {
+					if !t.ready[n] {
+						target, block = t, n
+						break
+					}
+				}
+				if target != nil {
+					break
+				}
+			}
+		}
+		if target == nil {
 			for j := 0; j < len(s.tracks); j++ {
 				t := s.tracks[(s.selected+j)%len(s.tracks)]
 				for n, ready := range t.ready {

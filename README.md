@@ -60,6 +60,18 @@ Install it with `sudo apt install eject` if missing. Failures are also logged
 in `journalctl -u cdplayer`. If terminal eject works but the service reports
 permission denied, compare with `sudo -u cdplayer -g cdrom eject -v /dev/sr0`;
 the app runs with that service account's permissions rather than your login's.
+For intermittent boot or USB reconnection failures, collect diagnostics while
+the error is present:
+
+```sh
+sudo bash scripts/diagnose-cd.sh
+```
+
+This reports the installed service settings, its actual running groups, optical
+device permissions, and recent kernel/player logs without opening the drive or
+changing settings. A brief permission error followed by `drive not ready`
+does not establish a permanent group problem; check for device resets as well.
+
 Album art, album/artist names, and track titles are looked up in the background.
 
 The **Raspberry Pi** tab shows CPU temperature, overall CPU usage, used/total
@@ -589,7 +601,11 @@ run: `go run ./cmd/cdplayer -mpd 127.0.0.1:6600` (stop the boot service first).
   correction logic and seeks within that session instead of reopening the drive
   for each MPD track URL.
 - Audio is cached in one-second blocks. The selected track's first two blocks
-  and stream requests take priority over background read-ahead. A selection can
+  and stream requests take priority over background read-ahead. After buffering
+  30 seconds of the selected track, the reader prepares the first 10 seconds of
+  the next and previous tracks before continuing to cache whole tracks. This
+  reduces adjacent-track startup waits once those beginnings are cached; it
+  cannot guarantee instant playback or prevent a stall on a slow drive. A selection can
   take effect after the current physical read finishes; it cannot interrupt a
   kernel drive read halfway through.
 - A separate **loopback-only**, dynamically allocated HTTP port serves WAV data
