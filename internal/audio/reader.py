@@ -5,20 +5,29 @@ import ctypes.util
 import json
 import faulthandler
 import os
-import signal
 import struct
 import sys
+import threading
+
+
+def watch_parent(parent):
+    # PR_SET_PDEATHSIG follows the spawning Linux thread, which may exit
+    # while a Go process is still healthy. Watch the process relationship.
+    def watch():
+        while os.getppid() == parent:
+            threading.Event().wait(0.5)
+        print('CD reader: player process exited', file=sys.stderr, flush=True)
+        os._exit(1)
+    if os.getppid() != parent:
+        raise RuntimeError('player exited during reader startup')
+    threading.Thread(target=watch, daemon=True).start()
 
 
 def main():
     faulthandler.enable()
     # Do not leave a reader running after an unexpected Go process exit.
-    parent = os.getppid()
-    if sys.platform.startswith('linux'):
-        if C.CDLL(None).prctl(1, signal.SIGTERM, 0, 0, 0) != 0:
-            raise RuntimeError('cannot bind reader lifetime to parent')
-        if os.getppid() != parent:
-            raise RuntimeError('player exited during reader startup')
+    if sys.argv[1] != '--check':
+        watch_parent(int(sys.argv[3]))
     libname = ctypes.util.find_library('cdio_cdda')
     if not libname:
         raise RuntimeError('libcdio_cdda missing; install the libcdio-cdda runtime package')

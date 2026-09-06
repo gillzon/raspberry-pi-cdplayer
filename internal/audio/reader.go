@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -34,6 +35,9 @@ type processReader struct {
 	in          io.WriteCloser
 	out         *bufio.Reader
 	cancel      context.CancelFunc
+	ctx         context.Context
+	cancelCause context.CancelCauseFunc
+	readTimeout time.Duration
 	diagnostics *diagnosticTail
 	waitOnce    sync.Once
 	waitErr     error
@@ -44,9 +48,10 @@ func openReader(ctx context.Context, device string, layout []Layout) (Reader, er
 }
 
 func openReaderProgram(ctx context.Context, device string, layout []Layout, program string) (Reader, error) {
-	ctx, cancel := context.WithCancel(ctx)
+	ctx, cancelCause := context.WithCancelCause(ctx)
+	cancel := func() { cancelCause(context.Canceled) }
 	payload, _ := json.Marshal(layout)
-	cmd := exec.CommandContext(ctx, "python3", "-u", "-c", program, device, string(payload))
+	cmd := exec.CommandContext(ctx, "python3", "-u", "-c", program, device, string(payload), strconv.Itoa(os.Getpid()))
 	diagnostics := &diagnosticTail{}
 	cmd.Stderr = io.MultiWriter(os.Stderr, diagnostics)
 	input, err := cmd.StdinPipe()
@@ -65,9 +70,9 @@ func openReaderProgram(ctx context.Context, device string, layout []Layout, prog
 		cancel()
 		return nil, err
 	}
-	r := &processReader{cmd: cmd, in: input, out: bufio.NewReader(output), cancel: cancel, diagnostics: diagnostics}
+	r := &processReader{cmd: cmd, in: input, out: bufio.NewReader(output), cancel: cancel, ctx: ctx, cancelCause: cancelCause, readTimeout: 30 * time.Second, diagnostics: diagnostics}
 	// A stalled device must not retain a helper indefinitely during startup.
-	timer := time.AfterFunc(30*time.Second, cancel)
+	timer := time.AfterFunc(30*time.Second, func() { cancelCause(fmt.Errorf("reader startup timed out after 30s")) })
 	greeting, err := r.out.ReadString('\n')
 	if err != nil || greeting != "CDPCM1\n" {
 		// EOF normally means the helper exited. Reap it before cancelling so the
@@ -77,7 +82,7 @@ func openReaderProgram(ctx context.Context, device string, layout []Layout, prog
 		}
 		exitErr := r.wait()
 		timer.Stop()
-		contextErr := ctx.Err()
+		contextErr := context.Cause(ctx)
 		r.in.Close()
 		cancel()
 		reason := diagnostics.String()
@@ -96,21 +101,39 @@ func openReaderProgram(ctx context.Context, device string, layout []Layout, prog
 	return r, nil
 }
 func (r *processReader) Read(sector, count int) ([]byte, error) {
-	timer := time.AfterFunc(30*time.Second, r.cancel)
+	timer := time.AfterFunc(r.readTimeout, func() { r.cancelCause(fmt.Errorf("CD read timed out after %s", r.readTimeout)) })
 	defer timer.Stop()
 	if _, err := fmt.Fprintf(r.in, "%d %d\n", sector, count); err != nil {
-		return nil, err
+		return nil, r.readFailure(sector, count, err)
 	}
 	var size uint32
 	if err := binary.Read(r.out, binary.LittleEndian, &size); err != nil {
-		return nil, err
+		return nil, r.readFailure(sector, count, err)
 	}
 	if size == 0 || size > uint32(count*2352) || size%2352 != 0 {
-		return nil, fmt.Errorf("invalid CD reader response size %d", size)
+		r.cancel()
+		return nil, r.readFailure(sector, count, fmt.Errorf("invalid CD reader response size %d", size))
 	}
 	data := make([]byte, size)
 	_, err := io.ReadFull(r.out, data)
+	if err != nil {
+		return nil, r.readFailure(sector, count, err)
+	}
 	return data, err
+}
+
+func (r *processReader) readFailure(sector, count int, err error) error {
+	// Let an exited helper report its real status before cancelling it.
+	// The read timer remains active if the process is stuck after closing stdout.
+	r.in.Close()
+	exitErr := r.wait()
+	cause := context.Cause(r.ctx)
+	r.cancel()
+	detail := r.diagnostics.String()
+	if detail == "" {
+		detail = "helper produced no diagnostic output"
+	}
+	return fmt.Errorf("read CD sectors %d..%d: %w; helper exit=%v; cancellation=%v; %s", sector, sector+count, err, exitErr, cause, detail)
 }
 func (r *processReader) wait() error {
 	r.waitOnce.Do(func() { r.waitErr = r.cmd.Wait() })

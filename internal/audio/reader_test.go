@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -106,5 +107,61 @@ func TestDiagnosticTailBounded(t *testing.T) {
 	d.Write([]byte(" final error"))
 	if len(d.String()) > 8192 || !strings.HasSuffix(d.String(), "final error") {
 		t.Fatal("diagnostic tail lost error or exceeded limit")
+	}
+}
+
+func TestReadFailureReportsCause(t *testing.T) {
+	for _, tc := range []struct {
+		name, program, want string
+		timeout             time.Duration
+	}{
+		{"exit", "print('CD reader: drive read failed',file=sys.stderr);sys.exit(9)", "exit status 9", time.Second},
+		{"signal", "import os,signal;os.kill(os.getpid(),signal.SIGTERM)", "signal: terminated", time.Second},
+		{"timeout", "import time;time.sleep(10)", "CD read timed out after 20ms", 20 * time.Millisecond},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			program := "import sys\nprint('CDPCM1',flush=True)\nsys.stdin.readline()\n" + tc.program
+			r, err := openReaderProgram(context.Background(), "/dev/fake", nil, program)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer r.Close()
+			r.(*processReader).readTimeout = tc.timeout
+			_, err = r.Read(150, 1)
+			if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "sectors 150..151") {
+				t.Fatalf("lost read failure: %v", err)
+			}
+		})
+	}
+}
+
+func TestReaderSurvivesSpawningThreadExit(t *testing.T) {
+	// A locked goroutine that returns causes its OS thread to be destroyed.
+	// The helper must remain alive while the Go process is alive.
+	prefix := strings.Split(readerProgram, "\ndef main():")[0]
+	program := prefix + "\nwatch_parent(int(sys.argv[3]))\nprint('CDPCM1',flush=True)\nfor line in sys.stdin:\n sys.stdout.buffer.write(struct.pack('<I',2352)+bytes(2352))\n sys.stdout.buffer.flush()\n"
+	result := make(chan Reader, 1)
+	failures := make(chan error, 1)
+	done := make(chan struct{})
+	go func() {
+		runtime.LockOSThread()
+		defer close(done)
+		r, err := openReaderProgram(context.Background(), "/dev/fake", nil, program)
+		if err != nil {
+			failures <- err
+			return
+		}
+		result <- r
+	}()
+	<-done
+	select {
+	case err := <-failures:
+		t.Fatal(err)
+	case r := <-result:
+		defer r.Close()
+		time.Sleep(600 * time.Millisecond)
+		if _, err := r.Read(0, 1); err != nil {
+			t.Fatalf("reader died with spawning thread: %v", err)
+		}
 	}
 }
