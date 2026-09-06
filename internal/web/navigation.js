@@ -1,8 +1,10 @@
 // Combine a burst of navigation clicks into one absolute track selection.
 class TrackNavigation {
-  constructor(send, preview, setTimer = setTimeout, clearTimer = clearTimeout) {
+  constructor(send, preview, setTimer = (callback, delay) => setTimeout(callback, delay), clearTimer = id => clearTimeout(id)) {
     this.send = send;
     this.preview = preview;
+    // Browser timer functions require the Window/Worker receiver. Wrappers
+    // avoid calling native timers as methods of this navigation instance.
     this.setTimer = setTimer;
     this.clearTimer = clearTimer;
     this.discID = '';

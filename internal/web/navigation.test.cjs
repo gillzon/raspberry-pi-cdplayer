@@ -31,3 +31,29 @@ test('disc replacement and explicit controls cancel pending navigation',()=>{
 test('Next from stopped with no current track selects the first audio track',()=>{
   const s=setup([2,3],-1);s.nav.step(1);s.flush();assert.deepEqual(s.sent,[[2,'disc-a']]);
 });
+
+test('browser timers retain their required global receiver',()=>{
+  const fs=require('node:fs'),vm=require('node:vm');
+  const context=vm.createContext({});
+  vm.runInContext(`
+    const timers=new Map();let nextID=0;
+    function setTimeout(callback,delay){
+      if(this!==globalThis)throw new TypeError('Illegal invocation');
+      timers.set(++nextID,callback);return nextID;
+    }
+    function clearTimeout(id){
+      if(this!==globalThis)throw new TypeError('Illegal invocation');
+      timers.delete(id);
+    }
+  `,context);
+  vm.runInContext(fs.readFileSync(__dirname+'/navigation.js','utf8'),context);
+  vm.runInContext(`
+    const sent=[];
+    const nav=new TrackNavigation((track)=>sent.push(track),()=>{});
+    nav.update('disc',[1,2,3,4],0);
+    nav.step(1);nav.step(1);
+    for(const callback of timers.values())callback();
+    if(sent.length!==1||sent[0]!==3)throw Error('Track command was not sent');
+    nav.step(1);nav.cancel();
+  `,context);
+});
