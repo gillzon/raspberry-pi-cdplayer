@@ -3,6 +3,7 @@ package player
 import (
 	"context"
 	"log/slog"
+	"time"
 
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/disc"
 )
@@ -26,7 +27,12 @@ type Controller struct {
 // Step is called immediately at startup and periodically thereafter. Failed
 // reads preserve the current session; failed queue changes are retried.
 func (c *Controller) Step(ctx context.Context) error {
+	probeStart := time.Now()
 	d, err := c.Drive.Read()
+	probeDuration := time.Since(probeStart)
+	if probeDuration >= time.Second {
+		slog.Warn("slow CD drive probe", "duration", probeDuration)
+	}
 	if err != nil {
 		return err
 	}
@@ -38,6 +44,7 @@ func (c *Controller) Step(ctx context.Context) error {
 		c.ready = false
 	}
 	if !c.ready || d.ID != c.current {
+		queueStart := time.Now()
 		if len(d.Tracks) == 0 {
 			err = c.Backend.Clear()
 		} else {
@@ -53,7 +60,7 @@ func (c *Controller) Step(ctx context.Context) error {
 		case len(d.Tracks) == 0:
 			slog.Info("disc has no audio tracks; ignoring")
 		default:
-			slog.Info("CD playback requested", "tracks", len(d.Tracks))
+			slog.Info("CD playback requested", "tracks", len(d.Tracks), "probe_duration", probeDuration, "queue_duration", time.Since(queueStart))
 		}
 	}
 	return c.Backend.PlaybackError()

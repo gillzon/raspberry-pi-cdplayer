@@ -21,8 +21,10 @@ ripping, metadata service, or mounted filesystem is needed for playback.
 
 Spin-up and table-of-contents reading add hardware-dependent delay. There is no
 fixed insertion-to-sound guarantee yet. A removal/reinsertion entirely between
-polls cannot be distinguished from the same disc remaining in the drive. This
-prototype reads the TOC each poll; test playback stability with your USB drive.
+polls can be missed. The table of contents is cached while the drive remains
+ready, so routine polls only check drive status instead of reading every track
+again during audio extraction. Removal, disconnection, or a not-ready state
+invalidates the cache.
 
 The screen, artwork, track titles, physical buttons, and ripping are later milestones.
 
@@ -174,6 +176,29 @@ If there is no sound, check both service logs and `mpc -p 6601 status`. Verify
 the `cdio_paranoia` plugin, drive permissions/power, ALSA card name, and that
 another process has not taken the output. An MPD `play` acknowledgment alone
 does not prove the audio output opened successfully.
+
+### Slow startup
+
+Keep the app running before inserting a disc; for everyday use, build the
+binary and enable the systemd services. `go run` also builds the program, but
+that only affects app launch, not subsequent disc insertions.
+
+Logs distinguish `CD playback requested` (MPD accepted the command) from
+`MPD playback progressing` (MPD reports advancing audio time). Neither proves
+that speakers are audible. The request log includes drive probe and queue setup
+durations, and probes taking a second or longer are logged separately.
+
+A minute-long stall with MPD disconnections is a fault to diagnose, not an
+intentional startup delay. After reproducing it on the Pi, collect:
+
+```sh
+sudo journalctl -u mpd -b -n 60 --no-pager
+sudo journalctl -k -b -n 80 --no-pager
+```
+
+For the dedicated instance, replace `-u mpd` with `-u cdplayer-mpd`. These logs
+help distinguish MPD failures from USB resets and drive I/O timeouts. Drive
+spin-up still takes time; software cannot eliminate that mechanical delay.
 
 ### MPD reports `Bad track number`
 

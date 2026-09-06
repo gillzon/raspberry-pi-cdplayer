@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"strconv"
 	"strings"
@@ -16,10 +17,11 @@ type Client struct {
 	Device  string
 	// AutoDevice omits the device path to work around MPD releases whose CD
 	// parser splits at the first slash. Use only with one audio CD drive.
-	AutoDevice bool
-	conn       net.Conn
-	reader     *bufio.Scanner
-	dial       func(context.Context, string, string) (net.Conn, error)
+	AutoDevice  bool
+	conn        net.Conn
+	reader      *bufio.Scanner
+	dial        func(context.Context, string, string) (net.Conn, error)
+	requestedAt time.Time
 }
 
 // Connect returns true for a new session so the controller can restore the queue
@@ -84,6 +86,7 @@ func (c *Client) command(command string) (map[string]string, error) {
 }
 
 func (c *Client) Clear() error {
+	c.requestedAt = time.Time{}
 	for _, command := range []string{"stop", "clear", "clearerror"} {
 		if _, err := c.command(command); err != nil {
 			return err
@@ -112,6 +115,9 @@ func (c *Client) Start(tracks []int) error {
 		}
 	}
 	_, err := c.command("play 0")
+	if err == nil {
+		c.requestedAt = time.Now()
+	}
 	return err
 }
 
@@ -122,6 +128,13 @@ func (c *Client) PlaybackError() error {
 	}
 	if message := status["error"]; message != "" {
 		return fmt.Errorf("MPD playback: %s", message)
+	}
+	if !c.requestedAt.IsZero() && status["state"] == "play" {
+		elapsed, _ := strconv.ParseFloat(status["elapsed"], 64)
+		if elapsed > 0 {
+			slog.Info("MPD playback progressing", "since_request", time.Since(c.requestedAt), "elapsed_seconds", elapsed)
+			c.requestedAt = time.Time{}
+		}
 	}
 	return nil
 }

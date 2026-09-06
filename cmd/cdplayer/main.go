@@ -33,7 +33,7 @@ func main() {
 		slog.Warn("MPD will select its own CD drive; connect only one CD drive", "detected_device", *device)
 	}
 	defer backend.Close()
-	controller := &player.Controller{Drive: disc.Drive{Device: *device}, Backend: backend}
+	controller := &player.Controller{Drive: &disc.Drive{Device: *device}, Backend: backend}
 	ticker := time.NewTicker(*poll)
 	defer ticker.Stop()
 	slog.Info("CD player starting", "device", *device, "mpd", *address)

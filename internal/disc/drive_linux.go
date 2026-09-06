@@ -11,12 +11,16 @@ import (
 )
 
 // Drive uses the Linux CD-ROM ABI, without cgo or a mounted filesystem.
-type Drive struct{ Device string }
+type Drive struct {
+	Device string
+	cache  tocCache
+}
 
-func (d Drive) Read() (Disc, error) {
+func (d *Drive) Read() (Disc, error) {
 	fd, err := syscall.Open(d.Device, syscall.O_RDONLY|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
 	if err != nil {
 		if errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ENODEV) || errors.Is(err, syscall.ENOMEDIUM) {
+			d.cache = tocCache{}
 			return Disc{}, nil
 		}
 		return Disc{}, fmt.Errorf("open %s: %w", d.Device, err)
@@ -24,17 +28,15 @@ func (d Drive) Read() (Disc, error) {
 	defer syscall.Close(fd)
 	status, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), 0x5326, 0x7fffffff) // CDROM_DRIVE_STATUS, CDSL_CURRENT
 	if errno != 0 {
+		d.cache = tocCache{}
 		return Disc{}, fmt.Errorf("drive status: %w", errno)
 	}
-	switch status {
-	case 1, 2: // CDS_NO_DISC, CDS_TRAY_OPEN
-		return Disc{}, nil
-	case 4: // CDS_DISC_OK
-	default:
-		return Disc{}, fmt.Errorf("drive not ready (status %d)", status)
-	}
+	return d.cache.read(int(status), func() (Disc, error) { return readTOC(fd) })
+}
+
+func readTOC(fd int) (Disc, error) {
 	var header [2]byte
-	_, _, errno = syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), 0x5305, uintptr(unsafe.Pointer(&header)))
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), 0x5305, uintptr(unsafe.Pointer(&header)))
 	if errno != 0 {
 		return Disc{}, fmt.Errorf("read CD table of contents: %w", errno)
 	}
