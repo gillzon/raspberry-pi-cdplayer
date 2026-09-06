@@ -5,6 +5,7 @@ package disc
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"syscall"
@@ -85,17 +86,47 @@ func readTOC(fd int) (Disc, error) {
 		}
 	}
 	d := Disc{ID: fmt.Sprintf("%x", hash.Sum(nil)), Tracks: tracks}
-	for _, number := range tracks {
-		end := offsets[0]
-		if number != int(header[1]) {
-			end = offsets[number+1]
+	lastSession := 0
+	if len(tracks) > 0 && len(tracks) < int(header[1]-header[0])+1 {
+		// CD Extra's next data track starts after a session gap, not at the
+		// audio lead-out. Query the session address in LBA (already minus 150).
+		var session [2]uint32 // struct cdrom_multisession, 8 bytes and aligned
+		b := (*[8]byte)(unsafe.Pointer(&session))
+		b[5] = 1 // CDROM_LBA
+		_, _, errno = syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), 0x5310, uintptr(unsafe.Pointer(&session)))
+		if errno == 0 && b[4] != 0 { // xa_flag: session address is valid
+			lastSession = int(int32(binary.LittleEndian.Uint32(b[:4])))
 		}
-		d.Layout = append(d.Layout, TrackLayout{Number: number, Start: int(offsets[number]) - 150, End: int(end) - 150})
 	}
+	d.Layout = audioLayout(tracks, int(header[0]), int(header[1]), offsets, lastSession)
 	// Mixed-session layouts need session-specific lead-out handling. Avoid
 	// sending an incorrect identifier for those discs; playback still works.
 	if len(tracks) == int(header[1]-header[0])+1 {
 		d.MusicBrainzID = musicBrainzID(int(header[0]), int(header[1]), offsets)
 	}
 	return d, nil
+}
+
+func audioLayout(tracks []int, first, last int, offsets [100]uint32, lastSession int) []TrackLayout {
+	var audio [100]bool
+	for _, number := range tracks {
+		audio[number] = true
+	}
+	var layout []TrackLayout
+	for _, number := range tracks {
+		start, end := int(offsets[number])-150, int(offsets[0])-150
+		if number < last {
+			end = int(offsets[number+1]) - 150
+			// Match libcdio-paranoia's CD Extra lead-out correction: 90s
+			// lead-out + 60s lead-in + 2s pregap. Never trim a single-session
+			// mixed-mode disc, or a boundary between two audio tracks.
+			const sessionGap = (90 + 60 + 2) * 75
+			audioEnd := lastSession - sessionGap
+			if !audio[number+1] && lastSession > int(offsets[first])-150 && audioEnd > start && audioEnd < end {
+				end = audioEnd
+			}
+		}
+		layout = append(layout, TrackLayout{Number: number, Start: start, End: end})
+	}
+	return layout
 }
