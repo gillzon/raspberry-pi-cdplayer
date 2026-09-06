@@ -4,6 +4,7 @@ package mpd
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -17,12 +18,13 @@ type Client struct {
 	Device  string
 	// AutoDevice omits the device path to work around MPD releases whose CD
 	// parser splits at the first slash. Use only with one audio CD drive.
-	AutoDevice  bool
-	conn        net.Conn
-	reader      *bufio.Scanner
-	dial        func(context.Context, string, string) (net.Conn, error)
-	requestedAt time.Time
-	lastStatus  map[string]string
+	AutoDevice     bool
+	conn           net.Conn
+	reader         *bufio.Scanner
+	dial           func(context.Context, string, string) (net.Conn, error)
+	commandTimeout time.Duration // zero uses the normal five-second deadline
+	requestedAt    time.Time
+	lastStatus     map[string]string
 }
 
 // Connect returns true for a new session so the controller can restore the queue
@@ -42,7 +44,15 @@ func (c *Client) Connect(ctx context.Context) (bool, error) {
 	}
 	c.conn, c.reader = conn, bufio.NewScanner(conn)
 	conn.SetDeadline(time.Now().Add(3 * time.Second))
-	if !c.reader.Scan() || !strings.HasPrefix(c.reader.Text(), "OK MPD ") {
+	if !c.reader.Scan() {
+		err := c.reader.Err()
+		c.Close()
+		if err != nil {
+			return false, fmt.Errorf("read MPD greeting: %w", err)
+		}
+		return false, fmt.Errorf("MPD closed connection before greeting")
+	}
+	if !strings.HasPrefix(c.reader.Text(), "OK MPD ") {
 		c.Close()
 		return false, fmt.Errorf("invalid MPD greeting")
 	}
@@ -58,13 +68,21 @@ func (c *Client) Close() {
 }
 
 func (c *Client) command(command string) (map[string]string, error) {
+	return c.commandValues(command, nil)
+}
+
+func (c *Client) commandValues(command string, valueReceived func(string, string)) (map[string]string, error) {
 	if c.conn == nil {
 		return nil, fmt.Errorf("MPD is disconnected")
 	}
-	c.conn.SetDeadline(time.Now().Add(5 * time.Second))
+	timeout := c.commandTimeout
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
+	c.conn.SetDeadline(time.Now().Add(timeout))
 	if _, err := fmt.Fprintln(c.conn, command); err != nil {
 		c.Close()
-		return nil, err
+		return nil, commandFailure(command, timeout, err)
 	}
 	values := make(map[string]string)
 	for c.reader.Scan() {
@@ -77,6 +95,9 @@ func (c *Client) command(command string) (map[string]string, error) {
 		}
 		if key, value, ok := strings.Cut(line, ": "); ok {
 			values[key] = value
+			if valueReceived != nil {
+				valueReceived(key, value)
+			}
 		}
 	}
 	err := c.reader.Err()
@@ -84,7 +105,15 @@ func (c *Client) command(command string) (map[string]string, error) {
 	if err == nil {
 		err = fmt.Errorf("MPD closed the connection")
 	}
-	return nil, err
+	return nil, commandFailure(command, timeout, err)
+}
+
+func commandFailure(command string, timeout time.Duration, err error) error {
+	var networkError net.Error
+	if errors.As(err, &networkError) && networkError.Timeout() {
+		return fmt.Errorf("MPD command %q timed out after %s; its outcome is unknown; the connection was closed for recovery: %w", command, timeout, err)
+	}
+	return fmt.Errorf("MPD command %q failed: %w", command, err)
 }
 
 func (c *Client) Clear() error {
@@ -107,11 +136,7 @@ func (c *Client) Start(tracks []int) error {
 		}
 	}
 	for _, track := range tracks {
-		device := c.Device
-		if c.AutoDevice {
-			device = ""
-		}
-		uri := fmt.Sprintf("cdda://%s/%d", device, track)
+		uri := c.trackURI(track)
 		if _, err := c.command("add " + strconv.Quote(uri)); err != nil {
 			return err
 		}
@@ -166,4 +191,29 @@ func (c *Client) Control(action string, position int) error {
 	}
 	_, err := c.command(command)
 	return err
+}
+
+func (c *Client) trackURI(track int) string {
+	device := c.Device
+	if c.AutoDevice {
+		device = ""
+	}
+	return fmt.Sprintf("cdda://%s/%d", device, track)
+}
+
+// QueueMatches checks every queued URI in order, without changing playback.
+// A socket reconnection alone does not mean MPD lost its queue or position.
+func (c *Client) QueueMatches(tracks []int) (bool, error) {
+	count := 0
+	matches := true
+	_, err := c.commandValues("playlistinfo", func(key, value string) {
+		if key != "file" {
+			return
+		}
+		if count >= len(tracks) || value != c.trackURI(tracks[count]) {
+			matches = false
+		}
+		count++
+	})
+	return matches && count == len(tracks), err
 }

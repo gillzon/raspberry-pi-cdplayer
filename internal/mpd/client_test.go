@@ -3,6 +3,7 @@ package mpd
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"reflect"
@@ -190,5 +191,56 @@ func TestPlaybackControls(t *testing.T) {
 	c.Close()
 	if got, want := <-done, []string{"play", "pause 1", "stop", "next", "previous", "play 2"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("commands: %v", got)
+	}
+}
+
+func TestTimeoutNamesCommandAndDiscardsConnection(t *testing.T) {
+	c, done := serve(t, func(string) string { return "" }) // accept command, never acknowledge
+	c.commandTimeout = 20 * time.Millisecond
+	if _, err := c.Connect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	err := c.Control("next", 0)
+	if err == nil || !strings.Contains(err.Error(), `MPD command "next" timed out`) {
+		t.Fatalf("error: %v", err)
+	}
+	var networkError net.Error
+	if !errors.As(err, &networkError) || !networkError.Timeout() {
+		t.Fatalf("lost timeout cause: %v", err)
+	}
+	if c.conn != nil {
+		t.Fatal("kept timed-out socket; late reply could corrupt next command")
+	}
+	if got := <-done; !reflect.DeepEqual(got, []string{"next"}) {
+		t.Fatalf("unsafe command replay: %v", got)
+	}
+}
+
+func TestQueueMatchesChecksAllURIsInOrder(t *testing.T) {
+	for _, tt := range []struct {
+		name, response string
+		want           bool
+	}{
+		{"matching", "file: cdda:///1\nPos: 0\nfile: cdda:///3\nPos: 1\nOK\n", true},
+		{"reordered", "file: cdda:///3\nfile: cdda:///1\nOK\n", false},
+		{"missing", "file: cdda:///1\nOK\n", false},
+		{"extra", "file: cdda:///1\nfile: cdda:///3\nfile: cdda:///4\nOK\n", false},
+		{"empty", "OK\n", false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			c, done := serve(t, func(string) string { return tt.response })
+			c.AutoDevice = true
+			if _, err := c.Connect(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			got, err := c.QueueMatches([]int{1, 3})
+			if err != nil || got != tt.want {
+				t.Fatalf("match: %v %v", got, err)
+			}
+			c.Close()
+			if commands := <-done; !reflect.DeepEqual(commands, []string{"playlistinfo"}) {
+				t.Fatalf("modified queue: %v", commands)
+			}
+		})
 	}
 }

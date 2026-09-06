@@ -43,32 +43,33 @@ async function refresh(){
   const response=await fetch('/api/status',{signal:AbortSignal.timeout(4000)});
   if(!response.ok)throw new Error('Status unavailable');
   const s=await response.json(),m=s.mpd||{},tracks=s.disc.Tracks||[];
-  const spotify=s.source==='spotify';
-  $('source').textContent=spotify?'Source: Spotify · control playback from your phone':s.spotify?.enabled?'Source: CD · Spotify '+(s.spotify.running?'ready':'unavailable'):'Source: CD';
+  const spotify=s.source==='spotify',idle=s.source==='idle',sp=s.spotify||{},now=sp.now||{};
+  $('source').textContent=idle?'Spotify disconnected · CD ready to start manually':spotify?'Source: Spotify · control playback from your phone':s.spotify?.enabled?'Source: CD · Spotify '+(s.spotify.running?'ready':'unavailable'):'Source: CD';
   if(s.spotify?.error)$('source').textContent+=' · '+s.spotify.error;
-  $('switchCD').hidden=!spotify;$('cdAlbum').hidden=spotify;
+  $('switchCD').hidden=!spotify&&!idle;$('switchCD').textContent=idle?'Play CD':'Switch to CD';$('cdAlbum').hidden=false;
+  document.querySelector('[data-action=play]').textContent=idle?'Play CD':'Play';
   const stale=!s.updated||Date.now()-Date.parse(s.updated)>5000;
   $('connection').textContent=stale?'Status delayed — player may be busy':'Connected · updated '+new Date(s.updated).toLocaleTimeString();
   const position=m.song===undefined?-1:Number(m.song),track=tracks[position];
   navigation.update(s.disc.ID,tracks,position);
-  if(stale||spotify)navigation.cancel();
+  if(stale||spotify||idle)navigation.cancel();
   const meta=s.metadata||{},names=meta.tracks||{},song=names[track];
-  $('albumTitle').textContent=meta.album||(s.disc.ID?'Unknown album':'Insert a CD');
-  $('albumArtist').textContent=meta.artist||(s.disc.ID?'Unknown artist':'');
-  $('metadataStatus').textContent=meta.status==='loading'?'Looking up album…':meta.message||'';
-  $('albumSource').hidden=!meta.release_id;if(meta.release_id)$('albumSource').href='https://musicbrainz.org/release/'+encodeURIComponent(meta.release_id);
-  const nextCover=meta.cover_url||'';
-  if(nextCover!==coverURL){coverURL=nextCover;$('coverArt').hidden=true;$('coverPlaceholder').hidden=false;if(nextCover){$('coverArt').alt=(meta.album||'Album')+' cover';$('coverArt').src=nextCover}else{$('coverArt').removeAttribute('src')}}
-  $('now').textContent=spotify?'Spotify selected':({play:'Playing',pause:'Paused',stop:'Stopped'}[m.state]||'Player unavailable')+(track?' · '+(song?.title||'Track '+track):'');
-  $('disc').textContent=spotify?'CD autoplay is suspended. Switch to CD to start the disc from track 1.':s.disc.ID?(tracks.length?(song?.artist?song.artist+' · ':'')+tracks.length+' audio tracks':'No audio tracks'):'No disc detected';
-  $('time').textContent=spotify?'':duration(m.elapsed)+' / '+duration(m.duration);
-  $('progress').max=Number(m.duration)||1;$('progress').value=spotify?0:Number(m.elapsed)||0;
+  $('albumTitle').textContent=spotify?(now.album||'Spotify'):meta.album||(s.disc.ID?'Unknown album':'Insert a CD');
+  $('albumArtist').textContent=spotify?(now.artist||''):meta.artist||(s.disc.ID?'Unknown artist':'');
+  $('metadataStatus').textContent=spotify?'Spotify Connect':meta.status==='loading'?'Looking up album…':meta.message||'';
+  $('albumSource').hidden=spotify||!meta.release_id;if(meta.release_id)$('albumSource').href='https://musicbrainz.org/release/'+encodeURIComponent(meta.release_id);
+  const nextCover=spotify?(now.cover||''):(meta.cover_url||'');
+  if(nextCover!==coverURL){coverURL=nextCover;$('coverArt').hidden=true;$('coverPlaceholder').hidden=false;if(nextCover){$('coverArt').alt=((spotify?now.album:meta.album)||'Album')+' cover';$('coverArt').src=nextCover}else{$('coverArt').removeAttribute('src')}}
+  $('now').textContent=idle?'Stopped · press Play CD':spotify?(({playing:'Playing',paused:'Paused',stopped:'Stopped',loading:'Loading',connected:'Connected'}[sp.playback]||'Spotify')+(now.title?' · '+now.title:'')):({play:'Playing',pause:'Paused',stop:'Stopped'}[m.state]||'Player unavailable')+(track?' · '+(song?.title||'Track '+track):'');
+  $('disc').textContent=idle?'CD autoplay is suspended until you press Play CD.':spotify?'CD autoplay is suspended. Switch to CD to start the disc from track 1.':s.disc.ID?(tracks.length?(song?.artist?song.artist+' · ':'')+tracks.length+' audio tracks':'No audio tracks'):'No disc detected';
+  $('time').textContent=spotify?duration(now.position_ms/1000)+' / '+duration(now.duration_ms/1000):idle?'':duration(m.elapsed)+' / '+duration(m.duration);
+  $('progress').max=spotify?(now.duration_ms||1):(Number(m.duration)||1);$('progress').value=spotify?(now.position_ms||0):idle?0:Number(m.elapsed)||0;
   $('error').textContent=s.error||m.error||'';
   $('details').textContent=s.device+(s.disc.ID?' · Disc '+s.disc.ID.slice(0,12):'');
   const key=JSON.stringify([tracks,names]);
   if(key!==trackKey){$('tracks').replaceChildren(...tracks.map(n=>{const b=document.createElement('button');b.textContent=names[n]?.title?n+'. '+names[n].title+(names[n].artist?' · '+names[n].artist:''):'Track '+n;b.dataset.track=n;b.onclick=()=>control('track',n);return b}));trackKey=key}
   document.querySelectorAll('[data-track]').forEach(b=>b.setAttribute('aria-current',Number(b.dataset.track)===track?'true':'false'));
-  document.querySelectorAll('[data-action],[data-track]').forEach(b=>b.disabled=busy||stale||(spotify&&!['source-cd','eject'].includes(b.dataset.action))||(!tracks.length&&!['source-cd','stop','eject'].includes(b.dataset.action)));
+  document.querySelectorAll('[data-action],[data-track]').forEach(b=>b.disabled=busy||stale||(spotify&&!['source-cd','eject'].includes(b.dataset.action))||(idle&&!['source-cd','play','eject'].includes(b.dataset.action))||(!tracks.length&&!['source-cd','stop','eject',...(idle?['play']:[])].includes(b.dataset.action)));
  }catch(e){navigation.cancel();$('connection').textContent='Cannot reach player — retrying…';document.querySelectorAll('[data-action],[data-track]').forEach(b=>b.disabled=true)}
 }
 async function control(action,track,discID){

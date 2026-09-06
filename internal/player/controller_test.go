@@ -224,3 +224,125 @@ func TestSpotifyFailedHandoffSuppressesAutoplay(t *testing.T) {
 		t.Fatal("failed handoff allowed autoplay")
 	}
 }
+
+func TestSpotifySessionAndSinkHandoffsAreIdempotent(t *testing.T) {
+	ctx := context.Background()
+	b := &fakeBackend{}
+	c := &Controller{Drive: &fakeDrive{disc: disc.Disc{ID: "a", Tracks: []int{1}}}, Backend: b}
+	if err := c.Step(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		if err := c.UseSpotify(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if err := c.Step(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if b.clears != 1 || len(b.starts) != 1 {
+		t.Fatal("repeated handoff changed playback")
+	}
+	c.UseCD()
+	if err := c.Step(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.UseSpotify(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if b.clears != 2 {
+		t.Fatal("new Spotify session failed to stop resumed CD")
+	}
+}
+
+type matchingBackend struct {
+	fakeBackend
+	matches  bool
+	matchErr error
+	checks   int
+}
+
+func (b *matchingBackend) QueueMatches([]int) (bool, error) { b.checks++; return b.matches, b.matchErr }
+func TestReconnectPreservesQueueAfterTrackTimeout(t *testing.T) {
+	b := &matchingBackend{matches: true}
+	c := &Controller{Drive: &fakeDrive{disc: disc.Disc{ID: "album", Tracks: []int{1, 2}}}, Backend: b}
+	ctx := context.Background()
+	if err := c.Step(ctx); err != nil {
+		t.Fatal(err)
+	}
+	b.fresh = true
+	if err := c.Step(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(b.starts) != 1 || b.clears != 0 || b.checks != 1 {
+		t.Fatal("reconnect restarted an intact queue")
+	}
+	b.fresh = true
+	b.matches = false
+	if err := c.Step(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(b.starts) != 2 {
+		t.Fatal("missing queue was not restored")
+	}
+}
+func TestReconnectQueueCheckFailureRetriesWithoutRestart(t *testing.T) {
+	b := &matchingBackend{matches: true}
+	c := &Controller{Drive: &fakeDrive{disc: disc.Disc{ID: "album", Tracks: []int{1}}}, Backend: b}
+	ctx := context.Background()
+	if err := c.Step(ctx); err != nil {
+		t.Fatal(err)
+	}
+	b.fresh = true
+	b.matchErr = errors.New("MPD still busy")
+	if err := c.Step(ctx); err == nil {
+		t.Fatal("missing check error")
+	}
+	b.matchErr = nil
+	if err := c.Step(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(b.starts) != 1 || b.checks != 2 {
+		t.Fatal("failed check caused restart or was not retried")
+	}
+}
+
+func TestSpotifyDisconnectWaitsForManualCDStart(t *testing.T) {
+	ctx := context.Background()
+	d := &fakeDrive{disc: disc.Disc{ID: "a", Tracks: []int{1}}}
+	b := &fakeBackend{}
+	c := &Controller{Drive: d, Backend: b}
+	if err := c.Step(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.UseSpotify(ctx); err != nil {
+		t.Fatal(err)
+	}
+	c.SpotifyDisconnected()
+	if c.Source() != "idle" {
+		t.Fatal("disconnect did not expose idle state")
+	}
+	d.disc = disc.Disc{ID: "b", Tracks: []int{1, 2}}
+	for i := 0; i < 3; i++ {
+		b.fresh = true
+		if err := c.Step(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(b.starts) != 1 {
+		t.Fatal("disconnect or disc insertion started CD")
+	}
+	c.UseCD()
+	if err := c.Step(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if c.Source() != "cd" || len(b.starts) != 2 {
+		t.Fatal("manual CD start failed")
+	}
+	if err := c.UseSpotify(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if c.Source() != "spotify" {
+		t.Fatal("new Spotify session stayed idle")
+	}
+}

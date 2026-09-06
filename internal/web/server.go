@@ -22,6 +22,9 @@ import (
 //go:embed index.html
 var page []byte
 
+//go:embed display.html
+var displayPage []byte
+
 //go:embed navigation.js
 var navigation []byte
 
@@ -37,10 +40,11 @@ type State struct {
 }
 
 type Command struct {
-	Token  string `json:"token"`
-	Action string `json:"action"`
-	Track  int    `json:"track"`
-	DiscID string `json:"disc_id"`
+	Event  spotify.Event `json:"event"`
+	Token  string        `json:"token"`
+	Action string        `json:"action"`
+	Track  int           `json:"track"`
+	DiscID string        `json:"disc_id"`
 }
 
 type Server struct {
@@ -61,6 +65,11 @@ func (s *Server) Set(state State) {
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /display", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Write(displayPage)
+	})
 	mux.HandleFunc("GET /navigation.js", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache")
@@ -106,12 +115,12 @@ func (s *Server) Handler() http.Handler {
 	})
 	mux.HandleFunc("POST /api/control", func(w http.ResponseWriter, r *http.Request) {
 		var cmd Command
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024)).Decode(&cmd); err != nil {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16384)).Decode(&cmd); err != nil {
 			http.Error(w, "Invalid command", http.StatusBadRequest)
 			return
 		}
 		switch cmd.Action {
-		case "spotify-start", "source-cd", "play", "pause", "stop", "next", "previous", "eject":
+		case "spotify-event", "spotify-start", "source-cd", "play", "pause", "stop", "next", "previous", "eject":
 		case "track":
 			if cmd.Track < 1 || cmd.Track > 99 {
 				http.Error(w, "Invalid track", 400)

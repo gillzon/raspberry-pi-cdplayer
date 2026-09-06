@@ -17,6 +17,8 @@ RestartSec=3
 TimeoutStopSec=15
 NoNewPrivileges=true
 ProtectSystem=strict
+# librespot needs temporary files even when audio caching is disabled.
+PrivateTmp=true
 ProtectHome=true
 
 [Install]

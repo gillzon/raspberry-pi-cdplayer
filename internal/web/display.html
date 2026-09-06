@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Player display</title>
+<style>
+:root{color-scheme:dark;font:15px system-ui,sans-serif;background:#111916;color:#f0f5f1}*{box-sizing:border-box}body{margin:0;width:100vw;height:100dvh;overflow:hidden;padding:8px;display:grid;grid-template-rows:22px 1fr 24px 44px;gap:5px}header{display:flex;justify-content:space-between;gap:8px;font-size:12px;color:#b6c9bc;overflow:hidden}main{display:flex;gap:10px;align-items:center;min-height:0}.art{width:112px;height:112px;flex-shrink:0;border-radius:8px;background:#26392e;display:grid;place-items:center;overflow:hidden}.art img{width:100%;height:100%;object-fit:contain}.text{min-width:0}h1{font-size:18px;line-height:1.2;margin:0 0 8px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}p{margin:5px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#artist{color:#d0e5d7}#album{font-size:12px;color:#a8bcae}#message{font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:0;align-self:center}.controls{display:grid;grid-template-columns:repeat(4,1fr);gap:5px}button{font:inherit;font-size:13px;border:1px solid #587562;border-radius:6px;background:#304c3b;color:inherit;touch-action:manipulation;padding:0}button:disabled{opacity:.4}button:focus-visible{outline:2px solid #c9fbd6}[hidden]{display:none!important}
+</style>
+<header><span id="source">CD player</span><span id="status" role="status">Connecting…</span></header>
+<main><div class="art"><img id="cover" alt="Album cover" hidden><span id="placeholder">♫</span></div><div class="text"><h1 id="title">Waiting for player</h1><p id="artist"></p><p id="album"></p></div></main>
+<p id="message" role="status"></p>
+<div class="controls"><button id="previous">Previous</button><button id="pause">Pause</button><button id="play">Play</button><button id="next">Next</button></div>
+<script src="/navigation.js"></script>
+<script>
+const $=id=>document.getElementById(id);
+const buttons=['previous','pause','play','next'];
+let state=null,busy=false,coverURL='',failure='';
+const navigation=new TrackNavigation((track,discID)=>send('track',track,discID),track=>{if(track!==null)$('message').textContent='Selecting track '+track+'…'});
+$('cover').onload=()=>{$('cover').hidden=false;$('placeholder').hidden=true};
+$('cover').onerror=()=>{$('cover').hidden=true;$('placeholder').hidden=false};
+function render(s){
+ state=s;
+ const spotify=s.source==='spotify',idle=s.source==='idle',m=s.mpd||{},sp=s.spotify||{},tracks=s.disc?.Tracks||[],meta=s.metadata||{};
+ const position=m.song===undefined?-1:Number(m.song),track=tracks[position],song=meta.tracks?.[track]||{};
+ const stale=!s.updated||Date.now()-Date.parse(s.updated)>5000;
+ navigation.update(s.disc?.ID,tracks,position);if(stale||spotify||idle)navigation.cancel();
+ $('source').textContent=spotify?'Spotify':idle?'CD · ready':'CD';
+ $('status').textContent=stale?'Status delayed':idle?'Stopped':spotify?({playing:'Playing',paused:'Paused',loading:'Loading',connected:'Connected',stopped:'Stopped'}[sp.playback]||'Connected'):({play:'Playing',pause:'Paused',stop:'Stopped'}[m.state]||'Waiting');
+ $('title').textContent=spotify?(sp.now?.title||'Spotify Connect'):idle?'Press Play for CD':song.title||(track?'Track '+track:tracks.length?'Audio CD':'Insert a CD');
+ $('artist').textContent=spotify?(sp.now?.artist||''):(song.artist||meta.artist||'');
+ $('album').textContent=spotify?(sp.now?.album||''):(meta.album||'');
+ const url=spotify?(sp.now?.cover||''):(meta.cover_url||'');
+ if(url!==coverURL){coverURL=url;$('cover').hidden=true;$('placeholder').hidden=false;if(url)$('cover').src=url;else $('cover').removeAttribute('src')}
+ $('message').textContent=failure||s.error||(spotify?'Control Spotify from your phone':idle?'CD will stay stopped until you press Play':meta.message||'');
+ $('message').title=$('message').textContent;
+ for(const action of buttons)$(action).disabled=busy||stale||spotify||(idle?action!=='play':!tracks.length);
+}
+async function refresh(){
+ try{const r=await fetch('/api/status',{signal:AbortSignal.timeout(4000)});if(!r.ok)throw Error('Status unavailable');render(await r.json())}
+ catch(e){navigation.cancel();$('status').textContent='Disconnected';for(const action of buttons)$(action).disabled=true}
+}
+async function send(action,track,discID){
+ if(busy)return;busy=true;navigation.cancel();failure='';for(const a of buttons)$(a).disabled=true;
+ try{const r=await fetch('/api/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,track,disc_id:discID}),signal:AbortSignal.timeout(10000)});if(!r.ok)throw Error(await r.text())}
+ catch(e){failure=e.message}
+ finally{busy=false;await refresh()}
+}
+function press(action){if($(action).disabled)return;if(action==='next'||action==='previous')navigation.step(action==='next'?1:-1);else send(action)}
+for(const action of buttons)$(action).onclick=()=>press(action);
+// Keyboard equivalents for preview/testing; GPIO wiring is configured separately.
+document.addEventListener('keydown',e=>{const action={ArrowLeft:'previous',ArrowRight:'next',p:'pause',Enter:'play'}[e.key];if(action){e.preventDefault();if(!e.repeat)press(action)}});
+async function poll(){await refresh();setTimeout(poll,1000)}poll();
+</script>
+</html>

@@ -142,6 +142,9 @@ func main() {
 	}
 	for {
 		receiver.Tick()
+		if !receiver.State.Running {
+			controller.SpotifyDisconnected()
+		}
 		err := controller.Step(ctx)
 		if err != nil {
 			if err.Error() != lastError {
@@ -168,11 +171,23 @@ func main() {
 			}
 			if err == nil {
 				switch request.command.Action {
+				case "spotify-event":
+					if !receiver.Accept(request.command.Token) {
+						err = fmt.Errorf("obsolete Spotify receiver")
+					} else {
+						receiver.Apply(request.command.Event)
+						if request.command.Event.Kind == "session_disconnected" {
+							controller.SpotifyDisconnected()
+						}
+					}
 				case "spotify-start":
 					if !receiver.Accept(request.command.Token) {
 						err = fmt.Errorf("obsolete Spotify receiver")
 					} else {
 						err = controller.UseSpotify(request.ctx)
+						if err == nil && request.command.Event.Kind == "session_connected" {
+							receiver.Apply(request.command.Event)
+						}
 					}
 				case "source-cd":
 					if err = receiver.Stop(); err == nil {
@@ -182,7 +197,12 @@ func main() {
 				case "eject":
 					err = controller.Eject()
 				default:
-					if controller.Source() == "spotify" {
+					if controller.Source() == "idle" && request.command.Action == "play" {
+						if err = receiver.Stop(); err == nil {
+							controller.UseCD()
+							receiver.Tick()
+						}
+					} else if controller.Source() != "cd" {
 						err = fmt.Errorf("select Switch to CD first")
 					} else {
 						err = backend.Control(request.command.Action, position)

@@ -383,6 +383,7 @@ References: [MPD CD playback plugin](https://mpd.readthedocs.io/en/stable/plugin
 The app can run an ALSA-enabled **librespot** receiver. On your phone, select
 **Raspberry Pi CD Player** in Spotify's device picker on the same LAN. Spotify
 Premium is required by [librespot](https://github.com/librespot-org/librespot).
+Connecting a Spotify session immediately requests that CD playback stop.
 The [blocking sink hook](https://github.com/librespot-org/librespot/wiki/Events)
 stops and clears MPD before Spotify opens the sound output. If MPD cannot be
 stopped, Spotify waits instead of playing over the CD.
@@ -393,7 +394,7 @@ UI disconnects the receiver and starts the current disc from track 1. The
 receiver then advertises again for your next Spotify session. CD controls are
 disabled during Spotify; eject remains available. Spotify tracks, volume, and
 play/pause are controlled from your phone; the web UI shows the selected source
-and receiver availability, not Spotify track metadata. Disc information is the
+and receiver availability, plus Spotify album art, title, artist, album, and playback status. Disc information is the
 last observation while Spotify is selected, since drive polling is suspended.
 
 On the Pi:
@@ -470,3 +471,74 @@ selection addresses device renaming, not USB power loss or a hung drive: kernel
 `over-current` and repeated USB disconnect messages still require checking the
 power supply, cable, or powered USB hub. A disconnect/reconnect entirely between
 two polls at the same device path may not be observed.
+
+### Spotify connects but skips tracks without sound
+
+Connection alone does not confirm successful audio playback. Reproduce the
+problem and collect the receiver's errors before changing the sound device:
+
+```sh
+sudo bash scripts/diagnose-spotify.sh
+```
+
+This read-only script collects the receiver version, service states, sound
+hardware and its current owners, output selection, and recent logs. It does not
+stop music, restart services, or read Spotify credentials. If you run the app
+in a terminal instead of the boot service, also capture that terminal's errors.
+
+ALSA `Device or resource busy`, permission, or unsupported-format errors point
+to audio setup; stream download, authentication, or unavailable-track errors
+require a different fix. Do not assume every skipping problem is the CD handoff.
+Only the app-managed receiver should be active; a standalone `raspotify.service`
+may represent a different Spotify device and will not run the app's handoff.
+
+
+If receiver logs report `ReadOnlyFilesystem` for `/tmp/.tmp...`, update the
+service: librespot requires writable temporary storage even with audio caching
+disabled. Both service templates set `PrivateTmp=true`, which provides writable
+private `/tmp` and `/var/tmp` alongside `ProtectSystem=strict`. The normal updater
+installs this fix. To fix an existing Pi installation immediately:
+
+```sh
+sudo mkdir -p /etc/systemd/system/cdplayer.service.d
+printf '[Service]\nPrivateTmp=true\n' | sudo tee /etc/systemd/system/cdplayer.service.d/spotify-tmp.conf
+sudo systemctl daemon-reload
+sudo systemctl restart cdplayer
+```
+
+Reconnect Spotify after restarting. If the rapid skipping also produced
+`429 Too Many Requests`, pause playback and allow the rate limit to clear before
+trying again. The logs do not specify how long that will take.
+
+After an MPD command timeout, the app reconnects and checks the queued track
+URIs against the unchanged disc. If the queue still matches, it preserves MPD's
+current track and play/pause/stop state instead of restarting the album. A failed
+queue check is retried without rebuilding the queue; a missing or changed queue
+is rebuilt. This prevents a slow track change from triggering an unnecessary
+album restart, but does not make a stalled CD drive respond faster.
+
+
+After Spotify disconnects, the web UI shows **Play CD** and a stopped state.
+Disconnecting, inserting another disc, or reconnecting MPD does not start the CD
+in this state. Press Play CD to start the current disc from track 1. Pausing
+Spotify keeps Spotify selected; Switch to CD remains available for manual return.
+Spotify track metadata comes from librespot events, with HTTPS artwork loaded by
+your browser. Missing artwork falls back to the placeholder. Track and artwork
+information clears on disconnect and changes with each track.
+
+## Small TFT display preview
+
+`http://<pi-address>:8080/display` provides a compact landscape 320×240 touch
+view: album art, song title, artist, album, source, and four CD controls
+(Previous, Pause, Play, Next). It uses the same playback controller and navigation
+debouncing as the main web UI. Spotify artwork and track information appear
+while Spotify is selected; Spotify playback controls remain on the phone.
+After Spotify disconnects, Play becomes available without automatically starting
+the CD. The full web interface remains at `/`.
+
+This is a browser view, not a TFT driver. Display output, touch calibration,
+physical GPIO key mapping, and automatic kiosk startup depend on the exact HAT
+model and installed Raspberry Pi OS/display stack and are not configured yet.
+Preview with a 320×240 browser viewport. Keyboard equivalents for testing are
+Left/Right arrows (previous/next), P (pause), and Enter (play); these do not read
+GPIO buttons. Do not guess GPIO pins from the screen size alone.

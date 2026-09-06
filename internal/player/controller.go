@@ -19,24 +19,30 @@ type Backend interface {
 }
 
 type Controller struct {
-	Drive     Drive
-	Backend   Backend
-	current   string
-	ready     bool
-	observed  disc.Disc
-	ejectedID string
-	spotify   bool
+	Drive          Drive
+	Backend        Backend
+	current        string
+	ready          bool
+	observed       disc.Disc
+	ejectedID      string
+	spotify        bool
+	spotifyStopped bool
+	queueCheck     bool
+	spotifyIdle    bool
 }
 
 // Step is called immediately at startup and periodically thereafter. Failed
 // reads preserve the current session; failed queue changes are retried.
 func (c *Controller) Step(ctx context.Context) error {
 	if c.spotify {
-		_, err := c.Backend.Connect(ctx)
+		fresh, err := c.Backend.Connect(ctx)
 		if err != nil {
 			return err
 		}
-		return c.Backend.Clear()
+		if fresh {
+			c.spotifyStopped = false
+		}
+		return c.stopForSpotify()
 	}
 	probeStart := time.Now()
 	d, err := c.Drive.Read()
@@ -61,7 +67,18 @@ func (c *Controller) Step(ctx context.Context) error {
 		return err
 	}
 	if fresh {
-		c.ready = false
+		c.queueCheck = true
+	}
+	if c.queueCheck {
+		matches := false
+		if checker, ok := c.Backend.(interface{ QueueMatches([]int) (bool, error) }); ok && c.ready && d.ID == c.current {
+			matches, err = checker.QueueMatches(d.Tracks)
+			if err != nil {
+				return err
+			}
+		}
+		c.ready = matches
+		c.queueCheck = false
 	}
 	if !c.ready || d.ID != c.current {
 		queueStart := time.Now()
@@ -108,15 +125,41 @@ func (c *Controller) Eject() error {
 // keep the Spotify sink gated until this returns successfully.
 func (c *Controller) UseSpotify(ctx context.Context) error {
 	c.spotify = true
-	if _, err := c.Backend.Connect(ctx); err != nil {
+	c.spotifyIdle = false
+	fresh, err := c.Backend.Connect(ctx)
+	if err != nil {
 		return err
 	}
-	return c.Backend.Clear()
+	if fresh {
+		c.spotifyStopped = false
+	}
+	return c.stopForSpotify()
 }
-func (c *Controller) UseCD() { c.spotify = false; c.ready = false }
+func (c *Controller) stopForSpotify() error {
+	if c.spotifyStopped {
+		return nil
+	}
+	if err := c.Backend.Clear(); err != nil {
+		return err
+	}
+	c.spotifyStopped = true
+	slog.Info("CD stopped for Spotify; manual CD start required to return")
+	return nil
+}
+func (c *Controller) UseCD() { c.spotify = false; c.spotifyStopped = false; c.ready = false }
 func (c *Controller) Source() string {
 	if c.spotify {
+		if c.spotifyIdle {
+			return "idle"
+		}
 		return "spotify"
 	}
 	return "cd"
+}
+
+// SpotifyDisconnected exposes manual CD start without enabling autoplay.
+func (c *Controller) SpotifyDisconnected() {
+	if c.spotify {
+		c.spotifyIdle = true
+	}
 }

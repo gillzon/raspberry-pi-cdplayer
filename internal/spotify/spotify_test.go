@@ -74,3 +74,32 @@ func TestMissingReceiverBacksOff(t *testing.T) {
 		t.Fatal("retried without backoff")
 	}
 }
+
+func TestOnlyConnectRequestsPlaybackHandoff(t *testing.T) {
+	t.Setenv("CDPLAYER_SPOTIFY_CALLBACK", "http://localhost/api/control")
+	t.Setenv("CDPLAYER_SPOTIFY_TOKEN", "generation")
+	old := http.DefaultClient
+	t.Cleanup(func() { http.DefaultClient = old })
+	calls := 0
+	http.DefaultClient = &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+		calls++
+		body, _ := io.ReadAll(r.Body)
+		want := `"action":"spotify-event"`
+		if calls == 1 {
+			want = `"action":"spotify-start"`
+		}
+		if !strings.Contains(string(body), want) {
+			t.Fatalf("wrong event command: %s", body)
+		}
+		return &http.Response{StatusCode: http.StatusNoContent, Body: io.NopCloser(strings.NewReader(""))}, nil
+	})}
+	for i, event := range []string{"session_connected", "session_disconnected", "paused", "stopped", "track_changed"} {
+		t.Setenv("PLAYER_EVENT", event)
+		if err := Hook(); err != nil {
+			t.Fatal(err)
+		}
+		if calls != i+1 {
+			t.Fatalf("event %s was not delivered", event)
+		}
+	}
+}

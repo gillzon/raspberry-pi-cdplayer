@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -17,10 +18,13 @@ import (
 )
 
 type State struct {
-	Enabled bool   `json:"enabled"`
-	Running bool   `json:"running"`
-	Name    string `json:"name"`
-	Error   string `json:"error"`
+	Connected bool   `json:"connected"`
+	Playback  string `json:"playback"`
+	Now       Event  `json:"now"`
+	Enabled   bool   `json:"enabled"`
+	Running   bool   `json:"running"`
+	Name      string `json:"name"`
+	Error     string `json:"error"`
 }
 type Manager struct {
 	Binary, Device, Callback string
@@ -41,6 +45,7 @@ func (m *Manager) Tick() {
 			m.cmd = nil
 			m.Token = ""
 			m.State.Running = false
+			m.Apply(Event{Kind: "session_disconnected"})
 			m.State.Error = fmt.Sprintf("Spotify receiver exited: %v", err)
 			m.retry = time.Now().Add(5 * time.Second)
 		default:
@@ -99,6 +104,7 @@ func (m *Manager) Stop() error {
 	case <-m.done:
 		m.cmd = nil
 		m.State.Running = false
+		m.Apply(Event{Kind: "session_disconnected"})
 		return nil
 	case <-time.After(2 * time.Second):
 		return fmt.Errorf("Spotify receiver has not exited; CD remains stopped")
@@ -108,15 +114,32 @@ func (m *Manager) Accept(token string) bool {
 	return m.State.Running && m.Token != "" && token == m.Token
 }
 
-// Hook is invoked by librespot before opening its sink. A failed HTTP request
-// must not release that gate: librespot ignores hook exit failures.
+// Hook requests CD interruption as soon as a Spotify session connects. The
+// blocking sink hook repeats the handoff before audio opens, covering races.
+// Disconnect and pause deliberately leave source selection unchanged.
 func Hook() error {
-	if os.Getenv("PLAYER_EVENT") != "sink" || os.Getenv("SINK_STATUS") != "running" {
-		return nil
+	e := eventFromEnv()
+	event := e.Kind
+	handoff := event == "session_connected" || (event == "sink" && os.Getenv("SINK_STATUS") == "running")
+	if !handoff {
+		switch event {
+		case "session_disconnected", "track_changed", "playing", "paused", "stopped", "loading", "seeked", "position_correction":
+		default:
+			return nil
+		}
+	}
+	action := "spotify-event"
+	if handoff {
+		action = "spotify-start"
 	}
 	parent := os.Getppid()
-	body, _ := json.Marshal(map[string]string{"action": "spotify-start", "token": os.Getenv("CDPLAYER_SPOTIFY_TOKEN")})
+	body, _ := json.Marshal(struct {
+		Action string `json:"action"`
+		Token  string `json:"token"`
+		Event  Event  `json:"event"`
+	}{action, os.Getenv("CDPLAYER_SPOTIFY_TOKEN"), e})
 	url := os.Getenv("CDPLAYER_SPOTIFY_CALLBACK")
+	waitingLogged := false
 	for os.Getppid() == parent && parent > 1 {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
@@ -132,6 +155,13 @@ func Hook() error {
 			}
 		}
 		cancel()
+		if !handoff && event != "session_disconnected" {
+			return fmt.Errorf("Spotify event %s could not reach player", event)
+		}
+		if !waitingLogged {
+			slog.Warn("waiting to deliver Spotify event to player", "event", event)
+			waitingLogged = true
+		}
 		time.Sleep(250 * time.Millisecond)
 	}
 	return fmt.Errorf("Spotify receiver exited before audio handoff")
