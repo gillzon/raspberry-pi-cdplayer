@@ -26,7 +26,7 @@ ready, so routine polls only check drive status instead of reading every track
 again during audio extraction. Removal, disconnection, or a not-ready state
 invalidates the cache.
 
-Artwork, track titles, physical buttons, and ripping are later milestones.
+Physical buttons and ripping are later milestones.
 
 ## Browser interface
 
@@ -45,7 +45,7 @@ track time, and the latest player error. Click a track to play it, or use Play,
 Pause, Stop, Previous, Next, and Eject. Eject stops and clears playback before
 opening the configured drive's tray. If stopping fails, the tray is left alone;
 if ejecting fails (for example, a locked tray), the page shows the error.
-Album and song names are not looked up yet.
+Album art, album/artist names, and track titles are looked up in the background.
 
 The **Raspberry Pi** tab shows CPU temperature, overall CPU usage, used/total
 memory, uptime, hostname, model, architecture, and core count. These measurements
@@ -65,6 +65,38 @@ The default `:8080` listens on all network interfaces. The existing systemd
 service also enables the web page once you install the updated binary and
 restart it. HTML, CSS, and JavaScript are embedded in the binary with no external
 assets or JavaScript dependencies.
+
+## Album information and artwork
+
+On insertion, the app calculates a MusicBrainz disc ID from the existing table
+of contents and looks up the matching release and track credits. It then fetches
+the front cover from Cover Art Archive. Playback never waits for either request,
+and no additional disc scans are needed. Track-specific artists are shown for
+compilations; release artist credits are used as a fallback.
+
+First-time lookups require internet access from the Pi. Successful metadata and
+cover images are cached locally and served by the Pi, so later insertions can
+show both offline. The default cache is `$XDG_CACHE_HOME/cdplayer`, or
+`~/.cache/cdplayer`. Override it with `-cache-dir /path/to/cache`; an empty value
+disables disk caching. The updated systemd unit uses `/var/cache/cdplayer` via
+`CacheDirectory`. When upgrading an existing installation, reinstall the updated
+`deploy/cdplayer.service`, run `sudo systemctl daemon-reload`, and restart the
+service so this directory is writable under its filesystem restrictions.
+
+Unknown discs keep numbered tracks and placeholder art. A failed lookup never
+stops music; reinsert the disc to retry after restoring the network. Missing
+artwork does not hide available titles. If several editions match, the app uses
+the first matching edition and displays a notice; manual edition selection is
+not included. For now, metadata lookup supports standard all-audio CDs; mixed
+audio/data discs still play but use numbered tracks. Ejecting or swapping discs
+cancels pending requests and prevents old album information appearing on the
+next disc.
+
+The worker identifies itself to MusicBrainz and spaces requests at least 1.1
+seconds apart. It fetches a bounded cover thumbnail rather than a full-size scan.
+Sources: [MusicBrainz disc IDs](https://musicbrainz.org/doc/Disc_ID_Calculation),
+[MusicBrainz request policy](https://musicbrainz.org/doc/MusicBrainz_API/Rate_Limiting),
+[Cover Art Archive](https://musicbrainz.org/doc/Cover_Art_Archive/API).
 
 ## Hardware and OS
 

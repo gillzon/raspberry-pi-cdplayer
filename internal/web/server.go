@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/disc"
+	"github.com/gillzon/raspberry-pi-cdplayer/internal/metadata"
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/systeminfo"
 )
 
@@ -21,11 +22,12 @@ import (
 var page []byte
 
 type State struct {
-	Device  string            `json:"device"`
-	Disc    disc.Disc         `json:"disc"`
-	MPD     map[string]string `json:"mpd"`
-	Error   string            `json:"error"`
-	Updated time.Time         `json:"updated"`
+	Device   string            `json:"device"`
+	Disc     disc.Disc         `json:"disc"`
+	MPD      map[string]string `json:"mpd"`
+	Error    string            `json:"error"`
+	Updated  time.Time         `json:"updated"`
+	Metadata metadata.Info     `json:"metadata"`
 }
 
 type Command struct {
@@ -34,10 +36,11 @@ type Command struct {
 }
 
 type Server struct {
-	mu      sync.RWMutex
-	state   State
-	Control func(context.Context, Command) error
-	System  func() systeminfo.Info
+	mu       sync.RWMutex
+	state    State
+	Control  func(context.Context, Command) error
+	System   func() systeminfo.Info
+	Metadata *metadata.Manager
 }
 
 func (s *Server) Set(state State) {
@@ -50,6 +53,20 @@ func (s *Server) Set(state State) {
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/art/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if s.Metadata == nil {
+			http.NotFound(w, r)
+			return
+		}
+		art := s.Metadata.Art(r.PathValue("id"))
+		if len(art) == 0 {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", http.DetectContentType(art))
+		w.Header().Set("Cache-Control", "private, max-age=3600")
+		w.Write(art)
+	})
 	mux.HandleFunc("GET /api/system", func(w http.ResponseWriter, r *http.Request) {
 		if s.System == nil {
 			http.Error(w, "System information unavailable", 503)
@@ -69,6 +86,9 @@ func (s *Server) Handler() http.Handler {
 		s.mu.RLock()
 		state := s.state
 		s.mu.RUnlock()
+		if s.Metadata != nil {
+			state.Metadata = s.Metadata.Snapshot(state.Disc.ID)
+		}
 		json.NewEncoder(w).Encode(state)
 	})
 	mux.HandleFunc("POST /api/control", func(w http.ResponseWriter, r *http.Request) {

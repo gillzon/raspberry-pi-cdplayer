@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/disc"
+	"github.com/gillzon/raspberry-pi-cdplayer/internal/metadata"
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/mpd"
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/player"
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/systeminfo"
@@ -34,6 +35,11 @@ func main() {
 	autoDevice := flag.Bool("mpd-auto-device", false, "let MPD select the CD drive (single-drive workaround for Bad track number)")
 	poll := flag.Duration("poll", time.Second, "disc polling interval")
 	httpAddress := flag.String("http", ":8080", "web interface address (empty disables it)")
+	defaultCache := ""
+	if path, err := os.UserCacheDir(); err == nil {
+		defaultCache = filepath.Join(path, "cdplayer")
+	}
+	cacheDir := flag.String("cache-dir", defaultCache, "album and artwork cache directory (empty disables disk caching)")
 	flag.Parse()
 	if *poll < 100*time.Millisecond || !strings.HasPrefix(filepath.Clean(*device), "/dev/") || strings.ContainsAny(*device, "\r\n\"\\") || flag.NArg() != 0 {
 		slog.Error("use a /dev/ device path, no positional arguments, and a poll interval of at least 100ms")
@@ -63,6 +69,9 @@ func main() {
 		}
 	}}
 	website.Set(web.State{Device: *device, Error: "Starting player"})
+	albums := metadata.New(*cacheDir)
+	website.Metadata = albums
+	go albums.Run(ctx)
 	monitor := systeminfo.New()
 	website.System = monitor.Snapshot
 	go monitor.Run(ctx)
@@ -87,6 +96,7 @@ func main() {
 	slog.Info("CD player starting", "device", *device, "mpd", *address)
 	lastError := ""
 	publish := func(err error) {
+		albums.Observe(ctx, controller.Disc())
 		state := web.State{Device: *device, Disc: controller.Disc(), MPD: backend.Status(), Updated: time.Now()}
 		if err != nil {
 			state.Error = err.Error()

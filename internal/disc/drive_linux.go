@@ -59,6 +59,7 @@ func readTOC(fd int) (Disc, error) {
 		return Disc{}, fmt.Errorf("invalid CD track range %d–%d", header[0], header[1])
 	}
 	var tracks []int
+	var offsets [100]uint32
 	hash := sha256.New()
 	for track := int(header[0]); track <= int(header[1])+1; track++ {
 		number := byte(track)
@@ -76,9 +77,20 @@ func readTOC(fd int) (Disc, error) {
 			return Disc{}, fmt.Errorf("read TOC track %d: %w", number, errno)
 		}
 		hash.Write(b[:])
+		index := track
+		if number == 0xaa {
+			index = 0
+		}
+		offsets[index] = (uint32(b[4])*60+uint32(b[5]))*75 + uint32(b[6])
 		if number != 0xaa && (b[1]>>4)&4 == 0 { // CDROM_DATA_TRACK
 			tracks = append(tracks, track)
 		}
 	}
-	return Disc{ID: fmt.Sprintf("%x", hash.Sum(nil)), Tracks: tracks}, nil
+	d := Disc{ID: fmt.Sprintf("%x", hash.Sum(nil)), Tracks: tracks}
+	// Mixed-session layouts need session-specific lead-out handling. Avoid
+	// sending an incorrect identifier for those discs; playback still works.
+	if len(tracks) == int(header[1]-header[0])+1 {
+		d.MusicBrainzID = musicBrainzID(int(header[0]), int(header[1]), offsets)
+	}
+	return d, nil
 }

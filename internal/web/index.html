@@ -11,6 +11,8 @@
 <nav class="tabs" role="tablist" aria-label="Views"><button id="playerTab" role="tab" data-tab="playerPanel" aria-controls="playerPanel" aria-selected="true">Player</button><button id="systemTab" role="tab" data-tab="systemPanel" aria-controls="systemPanel" aria-selected="false" tabindex="-1">Raspberry Pi</button></nav>
 <div id="playerPanel" role="tabpanel" aria-labelledby="playerTab">
 <div id="connection" class="muted" role="status">Connecting…</div>
+<style>.album{display:flex;gap:20px;align-items:center;margin:20px 0}.cover{width:150px;height:150px;flex-shrink:0;background:#202925;border-radius:10px;display:grid;place-items:center;overflow:hidden}.cover img{width:100%;height:100%;object-fit:contain}.album h2{margin:0 0 8px}.album p{margin:8px 0}#tracks{grid-template-columns:1fr}#tracks button{text-align:left}@media(max-width:400px){.cover{width:100px;height:100px}}</style>
+<div class="album"><div class="cover"><img id="coverArt" alt="Album cover" hidden><span id="coverPlaceholder" class="muted">No artwork</span></div><div><h2 id="albumTitle">Unknown album</h2><p id="albumArtist" class="muted">Unknown artist</p><small id="metadataStatus" class="muted"></small><p><a id="albumSource" hidden target="_blank" rel="noopener" style="color:#9ed6ad">MusicBrainz</a></p></div></div>
 <section><div id="now">Waiting for status</div><p id="disc" class="muted"></p><progress id="progress" value="0" max="1"></progress><p id="time">0:00 / 0:00</p>
 <div class="controls"><button data-action="previous">Previous</button><button data-action="play">Play</button><button data-action="pause">Pause</button><button data-action="stop">Stop</button><button data-action="next">Next</button><button data-action="eject">Eject</button></div>
 <p id="error" role="status"></p><p id="commandError" role="alert"></p></section>
@@ -30,7 +32,9 @@
 <script>
 const $=id=>document.getElementById(id);
 const duration=n=>{n=Math.max(0,Math.floor(Number(n)||0));return Math.floor(n/60)+':'+String(n%60).padStart(2,'0')};
-let trackKey='',busy=false;
+let trackKey='',busy=false,coverURL='';
+$('coverArt').onerror=()=>{$('coverArt').hidden=true;$('coverPlaceholder').hidden=false};
+$('coverArt').onload=()=>{$('coverArt').hidden=false;$('coverPlaceholder').hidden=true};
 async function refresh(){
  try{
   const response=await fetch('/api/status',{signal:AbortSignal.timeout(4000)});
@@ -39,14 +43,21 @@ async function refresh(){
   const stale=!s.updated||Date.now()-Date.parse(s.updated)>5000;
   $('connection').textContent=stale?'Status delayed — player may be busy':'Connected · updated '+new Date(s.updated).toLocaleTimeString();
   const position=m.song===undefined?-1:Number(m.song),track=tracks[position];
-  $('now').textContent=({play:'Playing',pause:'Paused',stop:'Stopped'}[m.state]||'Player unavailable')+(track?' · Track '+track:'');
-  $('disc').textContent=s.disc.ID?(tracks.length?tracks.length+' audio tracks':'No audio tracks'):'No disc detected';
+  const meta=s.metadata||{},names=meta.tracks||{},song=names[track];
+  $('albumTitle').textContent=meta.album||(s.disc.ID?'Unknown album':'Insert a CD');
+  $('albumArtist').textContent=meta.artist||(s.disc.ID?'Unknown artist':'');
+  $('metadataStatus').textContent=meta.status==='loading'?'Looking up album…':meta.message||'';
+  $('albumSource').hidden=!meta.release_id;if(meta.release_id)$('albumSource').href='https://musicbrainz.org/release/'+encodeURIComponent(meta.release_id);
+  const nextCover=meta.cover_url||'';
+  if(nextCover!==coverURL){coverURL=nextCover;$('coverArt').hidden=true;$('coverPlaceholder').hidden=false;if(nextCover){$('coverArt').alt=(meta.album||'Album')+' cover';$('coverArt').src=nextCover}else{$('coverArt').removeAttribute('src')}}
+  $('now').textContent=({play:'Playing',pause:'Paused',stop:'Stopped'}[m.state]||'Player unavailable')+(track?' · '+(song?.title||'Track '+track):'');
+  $('disc').textContent=s.disc.ID?(tracks.length?(song?.artist?song.artist+' · ':'')+tracks.length+' audio tracks':'No audio tracks'):'No disc detected';
   $('time').textContent=duration(m.elapsed)+' / '+duration(m.duration);
   $('progress').max=Number(m.duration)||1;$('progress').value=Number(m.elapsed)||0;
   $('error').textContent=s.error||m.error||'';
   $('details').textContent=s.device+(s.disc.ID?' · Disc '+s.disc.ID.slice(0,12):'');
-  const key=JSON.stringify(tracks);
-  if(key!==trackKey){$('tracks').replaceChildren(...tracks.map(n=>{const b=document.createElement('button');b.textContent='Track '+n;b.dataset.track=n;b.onclick=()=>control('track',n);return b}));trackKey=key}
+  const key=JSON.stringify([tracks,names]);
+  if(key!==trackKey){$('tracks').replaceChildren(...tracks.map(n=>{const b=document.createElement('button');b.textContent=names[n]?.title?n+'. '+names[n].title+(names[n].artist?' · '+names[n].artist:''):'Track '+n;b.dataset.track=n;b.onclick=()=>control('track',n);return b}));trackKey=key}
   document.querySelectorAll('[data-track]').forEach(b=>b.setAttribute('aria-current',Number(b.dataset.track)===track?'true':'false'));
   document.querySelectorAll('[data-action],[data-track]').forEach(b=>b.disabled=busy||stale||(!tracks.length&&!['stop','eject'].includes(b.dataset.action)));
  }catch(e){$('connection').textContent='Cannot reach player — retrying…';document.querySelectorAll('[data-action],[data-track]').forEach(b=>b.disabled=true)}

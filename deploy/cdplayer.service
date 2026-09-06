@@ -8,6 +8,8 @@ Type=simple
 User=cdplayer
 Group=cdplayer
 SupplementaryGroups=cdrom
+CacheDirectory=cdplayer
+Environment=XDG_CACHE_HOME=/var/cache
 ExecStart=/usr/local/bin/cdplayer -device /dev/sr0 -mpd 127.0.0.1:6601
 Restart=on-failure
 RestartSec=3
