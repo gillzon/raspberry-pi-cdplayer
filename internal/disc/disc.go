@@ -6,4 +6,8 @@ type Disc struct {
 	ID            string
 	Tracks        []int
 	MusicBrainzID string
+	Layout        []TrackLayout `json:"-"`
 }
+
+// TrackLayout uses absolute logical sectors, with an exclusive end.
+type TrackLayout struct{ Number, Start, End int }

@@ -276,3 +276,50 @@ func TestRejectedTrackDoesNotMoveDisplayedPosition(t *testing.T) {
 		t.Fatal("rejected track changed displayed state")
 	}
 }
+
+func TestSlowTrackChangeAcknowledgedWithoutReplay(t *testing.T) {
+	if testing.Short() {
+		t.Skip("exercises a response beyond the former five-second deadline")
+	}
+	c, done := serve(t, func(command string) string {
+		if command == "play 1" {
+			time.Sleep(6 * time.Second)
+		}
+		return "OK\n"
+	})
+	if _, err := c.Connect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Control("track", 1); err != nil {
+		t.Fatalf("slow but successful track change failed: %v", err)
+	}
+	if c.Status()["song"] != "1" {
+		t.Fatal("acknowledged track not reflected")
+	}
+	c.Close()
+	if got := <-done; !reflect.DeepEqual(got, []string{"play 1"}) {
+		t.Fatalf("track command repeated: %v", got)
+	}
+}
+
+func TestCachedAudioURLsReplaceCDDAQueue(t *testing.T) {
+	c, done := serve(t, func(string) string { return "OK\n" })
+	c.TrackURL = func(track int) string { return fmt.Sprintf("http://127.0.0.1:1234/audio/session/%d.wav", track) }
+	if _, err := c.Connect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Start([]int{1, 3}); err != nil {
+		t.Fatal(err)
+	}
+	c.Close()
+	commands := <-done
+	var added []string
+	for _, command := range commands {
+		if strings.HasPrefix(command, "add ") {
+			added = append(added, command)
+		}
+	}
+	if want := []string{`add "http://127.0.0.1:1234/audio/session/1.wav"`, `add "http://127.0.0.1:1234/audio/session/3.wav"`}; !reflect.DeepEqual(added, want) {
+		t.Fatalf("URLs: %v", added)
+	}
+}

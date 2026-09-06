@@ -21,17 +21,18 @@ $('cover').onerror=()=>{$('cover').hidden=true;$('placeholder').hidden=false};
 function render(s){
  state=s;
  const spotify=s.source==='spotify',idle=s.source==='idle',m=s.mpd||{},sp=s.spotify||{},tracks=s.disc?.Tracks||[],meta=s.metadata||{};
- const position=m.song===undefined?-1:Number(m.song),track=tracks[position],song=meta.tracks?.[track]||{};
- const stale=!s.updated||Date.now()-Date.parse(s.updated)>5000;
+ const selecting=s.selection?.pending;
+ const position=selecting?tracks.indexOf(s.selection.track):(m.song===undefined?-1:Number(m.song)),track=tracks[position],song=meta.tracks?.[track]||{};
+ const stale=(!s.updated||Date.now()-Date.parse(s.updated)>5000)&&!selecting;
  navigation.update(s.disc?.ID,tracks,position);if(stale||spotify||idle)navigation.cancel();
  $('source').textContent=spotify?'Spotify':idle?'CD · ready':'CD';
- $('status').textContent=stale?'Status delayed':idle?'Stopped':spotify?({playing:'Playing',paused:'Paused',loading:'Loading',connected:'Connected',stopped:'Stopped'}[sp.playback]||'Connected'):({play:'Playing',pause:'Paused',stop:'Stopped'}[m.state]||'Waiting');
+ $('status').textContent=selecting?'Changing track…':busy?'Please wait…':stale?'Status delayed':idle?'Stopped':spotify?({playing:'Playing',paused:'Paused',loading:'Loading',connected:'Connected',stopped:'Stopped'}[sp.playback]||'Connected'):({play:'Playing',pause:'Paused',stop:'Stopped'}[m.state]||'Waiting');
  $('title').textContent=spotify?(sp.now?.title||'Spotify Connect'):idle?'Press Play for CD':song.title||(track?'Track '+track:tracks.length?'Audio CD':'Insert a CD');
  $('artist').textContent=spotify?(sp.now?.artist||''):(song.artist||meta.artist||'');
  $('album').textContent=spotify?(sp.now?.album||''):(meta.album||'');
  const url=spotify?(sp.now?.cover||''):(meta.cover_url||'');
  if(url!==coverURL){coverURL=url;$('cover').hidden=true;$('placeholder').hidden=false;if(url)$('cover').src=url;else $('cover').removeAttribute('src')}
- $('message').textContent=failure||s.error||(spotify?'Control Spotify from your phone':idle?'CD will stay stopped until you press Play':meta.message||'');
+ $('message').textContent=failure||s.selection?.error||s.audio?.error||s.error||(spotify?'Control Spotify from your phone':idle?'CD will stay stopped until you press Play':meta.message||'');
  $('message').title=$('message').textContent;
  for(const action of buttons)$(action).disabled=busy||stale||spotify||(idle?action!=='play':!tracks.length);
 }
@@ -41,7 +42,7 @@ async function refresh(){
 }
 async function send(action,track,discID){
  if(busy)return;busy=true;navigation.cancel();failure='';for(const a of buttons)$(a).disabled=true;
- try{const r=await fetch('/api/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,track,disc_id:discID}),signal:AbortSignal.timeout(10000)});if(!r.ok)throw Error(await r.text())}
+ try{const r=await fetch('/api/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,track,disc_id:discID}),signal:AbortSignal.timeout(30000)});if(!r.ok)throw Error(await r.text())}
  catch(e){failure=e.message}
  finally{busy=false;await refresh()}
 }

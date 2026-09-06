@@ -48,9 +48,10 @@ async function refresh(){
   if(s.spotify?.error)$('source').textContent+=' · '+s.spotify.error;
   $('switchCD').hidden=!spotify&&!idle;$('switchCD').textContent=idle?'Play CD':'Switch to CD';$('cdAlbum').hidden=false;
   document.querySelector('[data-action=play]').textContent=idle?'Play CD':'Play';
-  const stale=!s.updated||Date.now()-Date.parse(s.updated)>5000;
-  $('connection').textContent=stale?'Status delayed — player may be busy':'Connected · updated '+new Date(s.updated).toLocaleTimeString();
-  const position=m.song===undefined?-1:Number(m.song),track=tracks[position];
+  const selecting=s.selection?.pending,desired=s.selection?.track;
+  const stale=(!s.updated||Date.now()-Date.parse(s.updated)>5000)&&!selecting;
+  $('connection').textContent=selecting?'Changing to track '+desired+'…':busy?'Waiting for player to acknowledge command…':stale?'Status delayed — player may be busy':'Connected · updated '+new Date(s.updated).toLocaleTimeString();
+  const position=selecting?tracks.indexOf(desired):(m.song===undefined?-1:Number(m.song)),track=tracks[position];
   navigation.update(s.disc.ID,tracks,position);
   if(stale||spotify||idle)navigation.cancel();
   const meta=s.metadata||{},names=meta.tracks||{},song=names[track];
@@ -64,8 +65,8 @@ async function refresh(){
   $('disc').textContent=idle?'CD autoplay is suspended until you press Play CD.':spotify?'CD autoplay is suspended. Switch to CD to start the disc from track 1.':s.disc.ID?(tracks.length?(song?.artist?song.artist+' · ':'')+tracks.length+' audio tracks':'No audio tracks'):'No disc detected';
   $('time').textContent=spotify?duration(now.position_ms/1000)+' / '+duration(now.duration_ms/1000):idle?'':duration(m.elapsed)+' / '+duration(m.duration);
   $('progress').max=spotify?(now.duration_ms||1):(Number(m.duration)||1);$('progress').value=spotify?(now.position_ms||0):idle?0:Number(m.elapsed)||0;
-  $('error').textContent=s.error||m.error||'';
-  $('details').textContent=s.device+(s.disc.ID?' · Disc '+s.disc.ID.slice(0,12):'');
+  $('error').textContent=s.selection?.error||s.audio?.error||s.error||m.error||'';
+  $('details').textContent=s.device+(s.disc.ID?' · Disc '+s.disc.ID.slice(0,12):'')+(s.audio?.total_bytes?' · Audio cached '+Math.round(100*s.audio.cached_bytes/s.audio.total_bytes)+'%':'');
   const key=JSON.stringify([tracks,names]);
   if(key!==trackKey){$('tracks').replaceChildren(...tracks.map(n=>{const b=document.createElement('button');b.textContent=names[n]?.title?n+'. '+names[n].title+(names[n].artist?' · '+names[n].artist:''):'Track '+n;b.dataset.track=n;b.onclick=()=>control('track',n);return b}));trackKey=key}
   document.querySelectorAll('[data-track]').forEach(b=>b.setAttribute('aria-current',Number(b.dataset.track)===track?'true':'false'));
@@ -76,7 +77,7 @@ async function control(action,track,discID){
  if(busy)return;
  navigation.cancel();
  busy=true;document.querySelectorAll('[data-action],[data-track]').forEach(b=>b.disabled=true);$('commandError').textContent='';
- try{const r=await fetch('/api/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,track,disc_id:discID}),signal:AbortSignal.timeout(10000)});if(!r.ok)throw new Error(await r.text())}
+ try{const r=await fetch('/api/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,track,disc_id:discID}),signal:AbortSignal.timeout(30000)});if(!r.ok)throw new Error(await r.text())}
  catch(e){$('commandError').textContent=e.message}
  finally{busy=false;await refresh()}
 }

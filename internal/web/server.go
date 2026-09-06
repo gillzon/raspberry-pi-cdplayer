@@ -13,8 +13,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gillzon/raspberry-pi-cdplayer/internal/audio"
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/disc"
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/metadata"
+	"github.com/gillzon/raspberry-pi-cdplayer/internal/player"
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/spotify"
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/systeminfo"
 )
@@ -29,14 +31,16 @@ var displayPage []byte
 var navigation []byte
 
 type State struct {
-	Source   string            `json:"source"`
-	Spotify  spotify.State     `json:"spotify"`
-	Device   string            `json:"device"`
-	Disc     disc.Disc         `json:"disc"`
-	MPD      map[string]string `json:"mpd"`
-	Error    string            `json:"error"`
-	Updated  time.Time         `json:"updated"`
-	Metadata metadata.Info     `json:"metadata"`
+	Selection player.TrackSelection `json:"selection"`
+	Audio     audio.Status          `json:"audio"`
+	Source    string                `json:"source"`
+	Spotify   spotify.State         `json:"spotify"`
+	Device    string                `json:"device"`
+	Disc      disc.Disc             `json:"disc"`
+	MPD       map[string]string     `json:"mpd"`
+	Error     string                `json:"error"`
+	Updated   time.Time             `json:"updated"`
+	Metadata  metadata.Info         `json:"metadata"`
 }
 
 type Command struct {
@@ -48,11 +52,12 @@ type Command struct {
 }
 
 type Server struct {
-	mu       sync.RWMutex
-	state    State
-	Control  func(context.Context, Command) error
-	System   func() systeminfo.Info
-	Metadata *metadata.Manager
+	mu        sync.RWMutex
+	state     State
+	Control   func(context.Context, Command) error
+	Selection func() player.TrackSelection
+	System    func() systeminfo.Info
+	Metadata  *metadata.Manager
 }
 
 func (s *Server) Set(state State) {
@@ -108,6 +113,9 @@ func (s *Server) Handler() http.Handler {
 		s.mu.RLock()
 		state := s.state
 		s.mu.RUnlock()
+		if s.Selection != nil {
+			state.Selection = s.Selection()
+		}
 		if s.Metadata != nil {
 			state.Metadata = s.Metadata.Snapshot(state.Disc.ID)
 		}
@@ -130,7 +138,7 @@ func (s *Server) Handler() http.Handler {
 			http.Error(w, "Unknown action", 400)
 			return
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+		ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
 		defer cancel()
 		if s.Control == nil {
 			http.Error(w, "Player unavailable", 503)

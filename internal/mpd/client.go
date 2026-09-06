@@ -14,15 +14,16 @@ import (
 )
 
 type Client struct {
-	Address string
-	Device  string
+	Address  string
+	TrackURL func(int) string
+	Device   string
 	// AutoDevice omits the device path to work around MPD releases whose CD
 	// parser splits at the first slash. Use only with one audio CD drive.
 	AutoDevice     bool
 	conn           net.Conn
 	reader         *bufio.Scanner
 	dial           func(context.Context, string, string) (net.Conn, error)
-	commandTimeout time.Duration // zero uses the normal five-second deadline
+	commandTimeout time.Duration // zero uses command-specific deadlines
 	requestedAt    time.Time
 	lastStatus     map[string]string
 }
@@ -78,6 +79,11 @@ func (c *Client) commandValues(command string, valueReceived func(string, string
 	timeout := c.commandTimeout
 	if timeout <= 0 {
 		timeout = 5 * time.Second
+		// Optical drive seeking/opening can delay a playback acknowledgement even
+		// though MPD eventually applies it. Keep routine health checks short.
+		if command == "play" || strings.HasPrefix(command, "play ") || command == "next" || command == "previous" {
+			timeout = 15 * time.Second
+		}
 	}
 	c.conn.SetDeadline(time.Now().Add(timeout))
 	if _, err := fmt.Fprintln(c.conn, command); err != nil {
@@ -215,6 +221,9 @@ func (c *Client) Control(action string, position int) error {
 }
 
 func (c *Client) trackURI(track int) string {
+	if c.TrackURL != nil {
+		return c.TrackURL(track)
+	}
 	device := c.Device
 	if c.AutoDevice {
 		device = ""

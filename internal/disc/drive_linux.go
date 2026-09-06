@@ -85,6 +85,13 @@ func readTOC(fd int) (Disc, error) {
 		}
 	}
 	d := Disc{ID: fmt.Sprintf("%x", hash.Sum(nil)), Tracks: tracks}
+	for _, number := range tracks {
+		end := offsets[0]
+		if number != int(header[1]) {
+			end = offsets[number+1]
+		}
+		d.Layout = append(d.Layout, TrackLayout{Number: number, Start: int(offsets[number]) - 150, End: int(end) - 150})
+	}
 	// Mixed-session layouts need session-specific lead-out handling. Avoid
 	// sending an incorrect identifier for those discs; playback still works.
 	if len(tracks) == int(header[1]-header[0])+1 {

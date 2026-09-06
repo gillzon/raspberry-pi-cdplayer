@@ -21,6 +21,8 @@ type Backend interface {
 type Controller struct {
 	Drive          Drive
 	Backend        Backend
+	Prepare        func(disc.Disc) error
+	Release        func()
 	current        string
 	ready          bool
 	observed       disc.Disc
@@ -61,6 +63,11 @@ func (c *Controller) Step(ctx context.Context) error {
 			return nil
 		}
 		c.ejectedID = ""
+	}
+	if c.Prepare != nil {
+		if err := c.Prepare(d); err != nil {
+			return err
+		}
 	}
 	fresh, err := c.Backend.Connect(ctx)
 	if err != nil {
@@ -110,6 +117,10 @@ func (c *Controller) Eject() error {
 	if !ok {
 		return fmt.Errorf("drive does not support eject")
 	}
+	if c.Release != nil {
+		c.Release()
+		c.ready = false
+	}
 	if err := c.Backend.Clear(); err != nil {
 		return fmt.Errorf("stop playback before eject: %w", err)
 	}
@@ -126,6 +137,10 @@ func (c *Controller) Eject() error {
 func (c *Controller) UseSpotify(ctx context.Context) error {
 	c.spotify = true
 	c.spotifyIdle = false
+	if c.Release != nil {
+		c.Release()
+		c.ready = false
+	}
 	fresh, err := c.Backend.Connect(ctx)
 	if err != nil {
 		return err
@@ -143,6 +158,9 @@ func (c *Controller) stopForSpotify() error {
 		return err
 	}
 	c.spotifyStopped = true
+	if c.Release != nil {
+		c.Release()
+	}
 	slog.Info("CD stopped for Spotify; manual CD start required to return")
 	return nil
 }
