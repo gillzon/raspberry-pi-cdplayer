@@ -448,3 +448,25 @@ that the CD stops, pause Spotify and insert a disc (it should stay silent), then
 choose Switch to CD. Automated tests cover source transitions, failed handoffs,
 receiver restarts, and stale callback rejection; real Spotify playback requires
 verification on the Pi with your account and audio output.
+
+### Automatic USB CD drive selection
+
+`-device auto` is now the default, including both boot service templates. The
+app checks Linux `/sys/class/block/*/device/type` for the single CD/DVD device
+and uses its `/dev` node. Audio CDs do **not** need to be mounted. It waits when
+no drive is connected and follows changes such as `/dev/sr0` to `/dev/sr1` after
+reconnection, discarding the old queue and TOC when the selected path changes.
+Automatic mode also lets MPD discover the drive, avoiding its explicit CD-device
+URL parsing problem on affected versions. Only connect one optical drive; if
+multiple are found, the app asks for an explicit `-device /dev/srN` instead.
+
+```sh
+go run ./cmd/cdplayer -mpd 127.0.0.1:6600 -device auto
+```
+
+After syncing these changes, `bash scripts/update.sh` installs the updated boot
+service. An explicit `-device /dev/sr0` still pins the app to that path. Automatic
+selection addresses device renaming, not USB power loss or a hung drive: kernel
+`over-current` and repeated USB disconnect messages still require checking the
+power supply, cable, or powered USB hub. A disconnect/reconnect entirely between
+two polls at the same device path may not be observed.

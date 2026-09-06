@@ -31,7 +31,7 @@ type controlRequest struct {
 }
 
 func main() {
-	device := flag.String("device", "/dev/sr0", "CD drive device (absolute /dev path)")
+	device := flag.String("device", "auto", "CD drive: auto detects the single connected drive, or an absolute /dev path")
 	address := flag.String("mpd", "127.0.0.1:6601", "dedicated MPD TCP address")
 	autoDevice := flag.Bool("mpd-auto-device", false, "let MPD select the CD drive (single-drive workaround for Bad track number)")
 	poll := flag.Duration("poll", time.Second, "disc polling interval")
@@ -59,18 +59,28 @@ func main() {
 	}
 	receiver := &spotify.Manager{Binary: envDefault("CDPLAYER_SPOTIFY_BINARY", "librespot"), Device: *spotifyDevice, State: spotify.State{Enabled: *spotifyEnabled, Name: *spotifyName}}
 	defer receiver.Stop()
-	if *poll < 100*time.Millisecond || !strings.HasPrefix(filepath.Clean(*device), "/dev/") || strings.ContainsAny(*device, "\r\n\"\\") || flag.NArg() != 0 {
-		slog.Error("use a /dev/ device path, no positional arguments, and a poll interval of at least 100ms")
+	if *poll < 100*time.Millisecond || (*device != "auto" && !strings.HasPrefix(filepath.Clean(*device), "/dev/")) || strings.ContainsAny(*device, "\r\n\"\\") || flag.NArg() != 0 {
+		slog.Error("use auto or a /dev/ device path, no positional arguments, and a poll interval of at least 100ms")
 		os.Exit(2)
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	backend := &mpd.Client{Address: *address, Device: filepath.Clean(*device), AutoDevice: *autoDevice}
+	backend := &mpd.Client{Address: *address, Device: filepath.Clean(*device), AutoDevice: *autoDevice || *device == "auto"}
 	if *autoDevice {
 		slog.Warn("MPD will select its own CD drive; connect only one CD drive", "detected_device", *device)
 	}
 	defer backend.Close()
-	controller := &player.Controller{Drive: &disc.Drive{Device: *device}, Backend: backend}
+	selectedDevice := *device
+	var drive player.Drive = &disc.Drive{Device: *device}
+	if *device == "auto" {
+		selectedDevice = ""
+		drive = &disc.AutoDrive{OnChange: func(path string) {
+			selectedDevice = path
+			backend.Device = path
+			slog.Info("CD drive selection changed", "device", path)
+		}}
+	}
+	controller := &player.Controller{Drive: drive, Backend: backend}
 	commands := make(chan controlRequest)
 	website := &web.Server{Control: func(ctx context.Context, cmd web.Command) error {
 		request := controlRequest{ctx: ctx, command: cmd, result: make(chan error, 1)}
@@ -124,7 +134,7 @@ func main() {
 	lastError := ""
 	publish := func(err error) {
 		albums.Observe(ctx, controller.Disc())
-		state := web.State{Source: controller.Source(), Spotify: receiver.State, Device: *device, Disc: controller.Disc(), MPD: backend.Status(), Updated: time.Now()}
+		state := web.State{Source: controller.Source(), Spotify: receiver.State, Device: selectedDevice, Disc: controller.Disc(), MPD: backend.Status(), Updated: time.Now()}
 		if err != nil {
 			state.Error = err.Error()
 		}
