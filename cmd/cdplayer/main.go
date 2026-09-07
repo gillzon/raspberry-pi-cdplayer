@@ -33,7 +33,7 @@ type controlRequest struct {
 
 func main() {
 	device := flag.String("device", "auto", "CD drive: auto detects the single connected drive, or an absolute /dev path")
-	address := flag.String("mpd", "127.0.0.1:6601", "dedicated MPD TCP address")
+	address := flag.String("mpd", "127.0.0.1:6600", "MPD TCP address (use port 6601 for the optional dedicated instance)")
 	checkAudio := flag.Bool("check-audio", false, "check persistent CD reader dependencies without opening the drive")
 	cachedAudio := flag.Bool("audio-cache", true, "read CD once in the background and serve cached WAV audio to local MPD")
 	verifyAudio := flag.Bool("audio-verify", false, "enable slower software audio verification and repair for difficult discs")
@@ -83,6 +83,21 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	backend := &mpd.Client{Address: *address, Device: filepath.Clean(*device), AutoDevice: *autoDevice || *device == "auto"}
+	outputPath := ""
+	if *cacheDir != "" {
+		outputPath = filepath.Join(*cacheDir, "audio-output")
+	}
+	if outputPath != "" {
+		saved, err := mpd.LoadOutput(outputPath)
+		if err != nil {
+			slog.Warn("load audio output setting", "error", err)
+		}
+		backend.PreferredOutput = saved
+		if device := mpd.OutputDevice(saved); device != "" {
+			receiver.Device = device
+		}
+	}
+	var outputs []mpd.Output
 	if *autoDevice {
 		slog.Warn("MPD will select its own CD drive; connect only one CD drive", "detected_device", *device)
 	}
@@ -219,7 +234,7 @@ func main() {
 		trackRequests.Update(controller.Disc().ID, controller.Disc().Tracks, controller.Source() == "cd")
 		albums.Observe(ctx, controller.Disc())
 		selectedDevice = drive.DevicePath()
-		state := web.State{Source: controller.Source(), Spotify: receiver.State, Device: selectedDevice, Disc: controller.Disc(), MPD: backend.Status(), Updated: time.Now()}
+		state := web.State{Outputs: outputs, Source: controller.Source(), Spotify: receiver.State, Device: selectedDevice, Disc: controller.Disc(), MPD: backend.Status(), Updated: time.Now()}
 		if audioCache != nil {
 			state.Audio = audioCache.Status()
 			if state.Audio.Error != "" && err == nil {
@@ -245,6 +260,48 @@ func main() {
 		}
 		if err == nil {
 			switch request.command.Action {
+			case "outputs":
+				_, err = backend.Connect(request.ctx)
+				if err == nil {
+					outputs, err = backend.Outputs()
+				}
+			case "output":
+				_, err = backend.Connect(request.ctx)
+				if err == nil {
+					outputs, err = backend.Outputs()
+				}
+				var chosen *mpd.Output
+				for i := range outputs {
+					if outputs[i].Name == request.command.Output {
+						chosen = &outputs[i]
+					}
+				}
+				if err == nil && chosen == nil {
+					err = fmt.Errorf("output is no longer configured; refresh Settings")
+				}
+				if err == nil && outputPath == "" {
+					err = fmt.Errorf("set a cache directory to save audio settings")
+				}
+				if err == nil {
+					err = receiver.Stop()
+					if err == nil {
+						controller.SpotifyDisconnected()
+						err = backend.SelectOutput(chosen.Name)
+					}
+					if err == nil {
+						backend.PreferredOutput = chosen.Name
+						if chosen.Device != "" {
+							receiver.Device = chosen.Device
+						}
+						if e := mpd.SaveOutput(outputPath, chosen.Name); e != nil {
+							err = fmt.Errorf("output changed but could not save for reboot: %w", e)
+						}
+					}
+					receiver.Tick()
+					if updated, e := backend.Outputs(); e == nil {
+						outputs = updated
+					}
+				}
 			case "spotify-event":
 				if !receiver.Accept(request.command.Token) {
 					err = fmt.Errorf("obsolete Spotify receiver")

@@ -14,9 +14,10 @@ import (
 )
 
 type Client struct {
-	Address  string
-	TrackURL func(int) string
-	Device   string
+	PreferredOutput string
+	Address         string
+	TrackURL        func(int) string
+	Device          string
 	// AutoDevice omits the device path to work around MPD releases whose CD
 	// parser splits at the first slash. Use only with one audio CD drive.
 	AutoDevice     bool
@@ -56,6 +57,11 @@ func (c *Client) Connect(ctx context.Context) (bool, error) {
 	if !strings.HasPrefix(c.reader.Text(), "OK MPD ") {
 		c.Close()
 		return false, fmt.Errorf("invalid MPD greeting")
+	}
+	if c.PreferredOutput != "" {
+		if err := c.SelectOutput(c.PreferredOutput); err != nil {
+			slog.Warn("could not restore audio output; choose an output in Settings", "error", err)
+		}
 	}
 	return true, nil
 }

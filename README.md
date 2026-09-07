@@ -226,8 +226,11 @@ module (no pip dependencies or C compiler needed). `-device auto` selects the
 single optical drive. The older `-audio-cache=false` path requires MPD's
 **cdio_paranoia** input plugin instead.
 
-This project uses its own MPD instance on **127.0.0.1:6601**. It owns that
-instance's queue and playback settings. An existing MPD on port 6600 can remain
+The app defaults to the system MPD on **127.0.0.1:6600**, matching
+`scripts/update.sh`. The optional dedicated setup below uses its own MPD
+instance on **127.0.0.1:6601**; pass `-mpd 127.0.0.1:6601` when running
+the app manually with that setup. It owns that instance's queue and playback
+settings. An existing MPD on port 6600 can remain
 installed, but stop any other player using the same drive or audio output while
 testing. Disable desktop CD autoplay if it interferes.
 
@@ -676,3 +679,34 @@ To compare with the old path or use a remote MPD:
 ```sh
 go run ./cmd/cdplayer -mpd 127.0.0.1:6600 -audio-cache=false -mpd-auto-device
 ```
+
+### Sound output settings
+
+Open **Settings → Sound output** in the web UI to choose HDMI, 3.5 mm headphones,
+USB audio, or another configured MPD output. Press **Apply output** to select
+one output. The app saves its name in `audio-output` under `-cache-dir` and
+restores it when connecting to MPD after a restart; numeric card/output IDs
+are not used as the saved preference.
+
+`scripts/update.sh` adds the Pi's detected ALSA playback devices to `/etc/mpd.conf`
+and restarts MPD. Existing configuration is preserved, with a backup at
+`/etc/mpd.conf.before-cdplayer-outputs`. The new outputs initially stay disabled
+until selected. For a manual installation, or after adding a USB sound card:
+
+```bash
+sudo python3 scripts/configure-outputs.py /etc/mpd.conf
+sudo systemctl restart mpd
+```
+
+For the dedicated MPD service, pass the configuration file used by that service
+instead, then restart `cdplayer-mpd`. Refresh outputs in Settings afterwards.
+HDMI outputs must be exposed by Linux and connected to an audio-capable display
+or receiver to produce sound; the selector cannot enable missing hardware.
+
+Outputs labelled **CD + Spotify** apply to both sources. Selecting an output
+restarts the Spotify receiver and disconnects the phone; reconnect in Spotify
+when ready. It does not automatically start the CD after Spotify disconnects.
+Existing custom outputs are labelled **CD only** and leave Spotify's destination
+unchanged. A brief interruption during switching is normal. No root access is
+used by web requests: switching uses MPD's output protocol and the app's own
+Spotify process. MPD configuration is only changed by the installation script.

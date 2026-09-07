@@ -63,6 +63,12 @@ if ! getent group cdrom >/dev/null; then
     exit 1
 fi
 restart_mpd=false
+# Add selectable outputs using stable ALSA card names. Existing audio outputs
+# remain enabled until the user chooses a destination in Settings.
+if [[ -d /proc/asound ]]; then
+    sudo python3 scripts/configure-outputs.py /etc/mpd.conf
+    restart_mpd=true
+fi
 if [[ " $(id -nG mpd) " != *" cdrom "* ]]; then
     sudo usermod -aG cdrom mpd
     restart_mpd=true

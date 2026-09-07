@@ -8,7 +8,7 @@
 </style>
 <style>[hidden]{display:none!important}.tabs{display:flex;gap:8px;margin:20px 0}.tabs [aria-selected=true]{background:#476d53}.metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}.metrics section{margin:0}.value{font-size:1.8rem;margin:10px 0}dt{color:#a8b7ae;margin-top:14px}dd{margin:4px 0;overflow-wrap:anywhere}</style>
 <h1>CD player</h1>
-<nav class="tabs" role="tablist" aria-label="Views"><button id="playerTab" role="tab" data-tab="playerPanel" aria-controls="playerPanel" aria-selected="true">Player</button><button id="systemTab" role="tab" data-tab="systemPanel" aria-controls="systemPanel" aria-selected="false" tabindex="-1">Raspberry Pi</button></nav>
+<nav class="tabs" role="tablist" aria-label="Views"><button id="playerTab" role="tab" data-tab="playerPanel" aria-controls="playerPanel" aria-selected="true">Player</button><button id="systemTab" role="tab" data-tab="systemPanel" aria-controls="systemPanel" aria-selected="false" tabindex="-1">Raspberry Pi</button><button id="settingsTab" role="tab" data-tab="settingsPanel" aria-controls="settingsPanel" aria-selected="false" tabindex="-1">Settings</button></nav>
 <div id="playerPanel" role="tabpanel" aria-labelledby="playerTab">
 <div id="connection" class="muted" role="status">Connecting…</div>
 <style>.album{display:flex;gap:20px;align-items:center;margin:20px 0}.cover{width:150px;height:150px;flex-shrink:0;background:#202925;border-radius:10px;display:grid;place-items:center;overflow:hidden}.cover img{width:100%;height:100%;object-fit:contain}.album h2{margin:0 0 8px}.album p{margin:8px 0}#tracks{grid-template-columns:1fr}#tracks button{text-align:left}@media(max-width:400px){.cover{width:100px;height:100px}}</style>
@@ -29,6 +29,15 @@
 </div>
 <section><dl><dt>Hostname</dt><dd id="hostname">—</dd><dt>Model</dt><dd id="model">—</dd><dt>Architecture / CPU cores</dt><dd id="architecture">—</dd></dl></section>
 <p class="muted">Updates every two seconds. Unavailable sensors show “Unavailable”. Memory use excludes memory Linux can reclaim.</p>
+</div>
+<div id="settingsPanel" role="tabpanel" aria-labelledby="settingsTab" hidden>
+<section><h2>Sound output</h2>
+<p>Choose where CD audio plays. Outputs marked “CD + Spotify” also change Spotify’s destination.</p>
+<label for="soundOutput">Output</label>
+<select id="soundOutput" style="font:inherit;max-width:100%;padding:12px;margin:12px 0" disabled></select>
+<div class="controls"><button id="applyOutput" disabled>Apply output</button><button id="refreshOutputs">Refresh outputs</button></div>
+<p class="muted">Saved across reboots. Sound may briefly pause. Changing output disconnects Spotify; reconnect from your phone afterwards.</p>
+<p id="outputStatus" role="status">Open Settings to load outputs.</p></section>
 </div>
 <script src="/navigation.js"></script>
 <script>
@@ -83,8 +92,35 @@ async function control(action,track,discID){
 }
 document.querySelectorAll('[data-action]').forEach(b=>b.onclick=()=>{if(busy)return;const action=b.dataset.action;if(action==='next'||action==='previous'){navigation.step(action==='next'?1:-1)}else{control(action)}});
 const tabs=[...document.querySelectorAll('[data-tab]')];
-function selectTab(tab){tabs.forEach(b=>{const active=b===tab;b.setAttribute('aria-selected',String(active));b.tabIndex=active?0:-1;$(b.dataset.tab).hidden=!active})}
+function selectTab(tab){if(tab.id==='settingsTab')loadOutputs();tabs.forEach(b=>{const active=b===tab;b.setAttribute('aria-selected',String(active));b.tabIndex=active?0:-1;$(b.dataset.tab).hidden=!active})}
 tabs.forEach((tab,i)=>{tab.onclick=()=>selectTab(tab);tab.onkeydown=e=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(e.key)){e.preventDefault();const target=tabs[e.key==='Home'?0:e.key==='End'?tabs.length-1:(i+(e.key==='ArrowRight'?1:tabs.length-1))%tabs.length];selectTab(target);target.focus()}}});
+let outputBusy=false;
+async function outputCommand(action,output){
+ const r=await fetch('/api/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,output}),signal:AbortSignal.timeout(30000)});
+ if(!r.ok)throw Error(await r.text());
+}
+async function loadOutputs(){
+ if(outputBusy)return;
+ outputBusy=true;$('applyOutput').disabled=true;$('refreshOutputs').disabled=true;$('soundOutput').disabled=true;
+ $('outputStatus').textContent='Loading outputs…';
+ try{
+  await outputCommand('outputs');
+  const r=await fetch('/api/status',{signal:AbortSignal.timeout(4000)});if(!r.ok)throw Error('Cannot load outputs');
+  const s=await r.json(),outputs=s.outputs||[];
+  $('soundOutput').replaceChildren(...outputs.map(o=>{const option=document.createElement('option');option.value=o.name;option.textContent=o.label+(o.device?' · CD + Spotify':' · CD only');option.selected=o.enabled;return option}));
+  $('soundOutput').disabled=!outputs.length;$('applyOutput').disabled=!outputs.length;
+  $('outputStatus').textContent=outputs.length?'Select an output and press Apply.':'No outputs configured. Run the output setup described in the README.';
+ }catch(e){$('outputStatus').textContent=e.message}
+ finally{outputBusy=false;$('refreshOutputs').disabled=false}
+}
+$('refreshOutputs').onclick=loadOutputs;
+$('applyOutput').onclick=async()=>{
+ if(outputBusy)return;outputBusy=true;$('applyOutput').disabled=true;$('refreshOutputs').disabled=true;$('soundOutput').disabled=true;
+ $('outputStatus').textContent='Changing output…';
+ try{await outputCommand('output',$('soundOutput').value);$('outputStatus').textContent='Output selected and saved. If using Spotify, reconnect from your phone.'}
+ catch(e){$('outputStatus').textContent=e.message}
+ finally{outputBusy=false;$('applyOutput').disabled=false;$('refreshOutputs').disabled=false;$('soundOutput').disabled=false;await refresh()}
+};
 async function systemPoll(){
  try{
   const r=await fetch('/api/system',{signal:AbortSignal.timeout(4000)});if(!r.ok)throw new Error('Unavailable');const s=await r.json();

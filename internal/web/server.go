@@ -16,6 +16,7 @@ import (
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/audio"
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/disc"
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/metadata"
+	"github.com/gillzon/raspberry-pi-cdplayer/internal/mpd"
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/player"
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/spotify"
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/systeminfo"
@@ -31,6 +32,7 @@ var displayPage []byte
 var navigation []byte
 
 type State struct {
+	Outputs   []mpd.Output          `json:"outputs"`
 	Selection player.TrackSelection `json:"selection"`
 	Audio     audio.Status          `json:"audio"`
 	Source    string                `json:"source"`
@@ -44,6 +46,7 @@ type State struct {
 }
 
 type Command struct {
+	Output string        `json:"output"`
 	Event  spotify.Event `json:"event"`
 	Token  string        `json:"token"`
 	Action string        `json:"action"`
@@ -63,6 +66,7 @@ type Server struct {
 func (s *Server) Set(state State) {
 	state.Disc.Tracks = slices.Clone(state.Disc.Tracks)
 	state.MPD = maps.Clone(state.MPD)
+	state.Outputs = slices.Clone(state.Outputs)
 	s.mu.Lock()
 	s.state = state
 	s.mu.Unlock()
@@ -128,7 +132,7 @@ func (s *Server) Handler() http.Handler {
 			return
 		}
 		switch cmd.Action {
-		case "spotify-event", "spotify-start", "source-cd", "play", "pause", "stop", "next", "previous", "eject":
+		case "outputs", "output", "spotify-event", "spotify-start", "source-cd", "play", "pause", "stop", "next", "previous", "eject":
 		case "track":
 			if cmd.Track < 1 || cmd.Track > 99 {
 				http.Error(w, "Invalid track", 400)

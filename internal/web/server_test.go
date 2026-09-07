@@ -98,3 +98,18 @@ func TestControlFailureAndMethods(t *testing.T) {
 		t.Fatal("missing embedded page")
 	}
 }
+
+func TestOutputSettingsUseController(t *testing.T) {
+	var got Command
+	s := &Server{Control: func(_ context.Context, cmd Command) error { got = cmd; return nil }}
+	for _, body := range []string{`{"action":"outputs"}`, `{"action":"output","output":"HDMI 1"}`} {
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, httptest.NewRequest("POST", "/api/control", strings.NewReader(body)))
+		if w.Code != 204 {
+			t.Fatalf("%d: %s", w.Code, w.Body.String())
+		}
+	}
+	if got.Action != "output" || got.Output != "HDMI 1" {
+		t.Fatalf("%+v", got)
+	}
+}
