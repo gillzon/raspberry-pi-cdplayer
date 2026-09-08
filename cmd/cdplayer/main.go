@@ -11,12 +11,14 @@ import (
 	"os/signal"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/audio"
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/disc"
+	"github.com/gillzon/raspberry-pi-cdplayer/internal/library"
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/metadata"
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/mpd"
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/player"
@@ -50,6 +52,7 @@ func main() {
 	spotifyDevice := flag.String("spotify-device", envDefault("CDPLAYER_SPOTIFY_DEVICE", "plughw:CARD=Headphones,DEV=0"), "Spotify ALSA output")
 	spotifyName := flag.String("spotify-name", envDefault("CDPLAYER_SPOTIFY_NAME", "Raspberry Pi CD Player"), "Spotify Connect device name")
 	spotifyEvent := flag.Bool("spotify-event", false, "internal Spotify sink handoff hook")
+	musicDir := flag.String("music-dir", envDefault("CDPLAYER_MUSIC_DIR", "/media/cdplayer"), "mounted USB music directory (empty disables USB library)")
 	flag.Parse()
 	if *cdSpeed < 0 || int64(*cdSpeed) > 2147483647 {
 		slog.Error("cd-speed must be a nonnegative 32-bit integer")
@@ -169,8 +172,43 @@ func main() {
 	if audioCache != nil {
 		trackRequests.OnSelect = audioCache.Select
 	}
+	var music *library.Library
+	var usbQueue []library.Track
+	usbMix := false
+	if *musicDir != "" {
+		if *cacheDir == "" {
+			slog.Error("USB music requires -cache-dir; use -music-dir= to disable")
+			return
+		}
+		var err error
+		music, err = library.New(*musicDir, filepath.Join(*cacheDir, "library.sqlite"))
+		if err != nil {
+			slog.Error("initialize USB library", "error", err)
+			return
+		}
+		host, _, err := net.SplitHostPort(*address)
+		if err != nil || (host != "localhost" && !net.ParseIP(host).IsLoopback()) {
+			slog.Error("USB music requires MPD on this Pi; use -music-dir= for remote MPD")
+			return
+		}
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			slog.Error("USB audio server", "error", err)
+			return
+		}
+		music.BaseURL = "http://" + listener.Addr().String()
+		server := &http.Server{Handler: music, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second}
+		defer server.Close()
+		go func() {
+			if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
+				slog.Error("USB audio server", "error", err)
+				cancel()
+			}
+		}()
+		go music.Run(ctx)
+	}
 	commands := make(chan controlRequest)
-	website := &web.Server{Selection: trackRequests.Snapshot, Control: func(ctx context.Context, cmd web.Command) error {
+	website := &web.Server{Library: music, Selection: trackRequests.Snapshot, Control: func(ctx context.Context, cmd web.Command) error {
 		if cmd.Action == "track" {
 			if err := trackRequests.Submit(cmd.Track, cmd.DiscID); err != nil {
 				return err
@@ -178,7 +216,7 @@ func main() {
 
 			return nil
 		}
-		if cmd.Action == "play" || cmd.Action == "pause" || cmd.Action == "stop" || cmd.Action == "eject" || cmd.Action == "source-cd" {
+		if cmd.Action == "play" || cmd.Action == "pause" || cmd.Action == "stop" || cmd.Action == "eject" || cmd.Action == "source-cd" || cmd.Action == "usb-play" || cmd.Action == "usb-mix" {
 			trackRequests.Cancel()
 		}
 		request := controlRequest{ctx: ctx, command: cmd, result: make(chan error, 1)}
@@ -235,7 +273,16 @@ func main() {
 		albums.Observe(ctx, controller.Disc())
 		selectedDevice = drive.DevicePath()
 		state := web.State{Outputs: outputs, Source: controller.Source(), Spotify: receiver.State, Device: selectedDevice, Disc: controller.Disc(), MPD: backend.Status(), Updated: time.Now()}
-		if audioCache != nil {
+		if controller.Source() == "usb" {
+			state.USBQueueLength = len(usbQueue)
+			state.USBMix = usbMix
+			if position, e := strconv.Atoi(state.MPD["song"]); e == nil && position >= 0 && position < len(usbQueue) {
+				song := usbQueue[position]
+				song.Path = ""
+				state.USB = &song
+			}
+		}
+		if audioCache != nil && controller.Source() == "cd" {
 			state.Audio = audioCache.Status()
 			if state.Audio.Error != "" && err == nil {
 				state.Error = state.Audio.Error
@@ -320,15 +367,82 @@ func main() {
 						receiver.Apply(request.command.Event)
 					}
 				}
+			case "usb-play", "usb-mix":
+				if music == nil {
+					err = fmt.Errorf("USB music is disabled")
+					break
+				}
+				var queue []library.Track
+				selected := -1
+				mix := request.command.Action == "usb-mix"
+				if mix {
+					queue, err = music.Mix(request.ctx)
+					selected = 0
+				} else {
+					var song library.Track
+					song, err = music.Get(request.ctx, request.command.SongID)
+					if err != nil {
+						break
+					}
+					file, e := music.Open(song)
+					if e != nil {
+						err = e
+						break
+					}
+					file.Close()
+					queue, err = music.Album(request.ctx, song.ID)
+					for i, t := range queue {
+						if t.ID == song.ID {
+							selected = i
+						}
+					}
+				}
+				if err != nil {
+					break
+				}
+				urls := make([]string, len(queue))
+				for i, t := range queue {
+					urls[i] = music.URL(t.ID)
+				}
+
+				if selected < 0 {
+					err = fmt.Errorf("song changed; refresh the library")
+					break
+				}
+				if err = receiver.Stop(); err != nil {
+					break
+				}
+				controller.UseUSB()
+				usbQueue = nil
+				_, err = backend.Connect(request.ctx)
+				if err == nil {
+					err = backend.StartURLs(urls, selected)
+				}
+				if err == nil {
+					usbQueue = queue
+					usbMix = mix
+				}
+				receiver.Tick()
 			case "source-cd":
-				if err = receiver.Stop(); err == nil {
+				err = receiver.Stop()
+				if err == nil && controller.Source() == "usb" {
+					// Stop USB even when a missing/unreadable CD prevents the next Step.
+					err = backend.Clear()
+				}
+				if err == nil {
 					controller.UseCD()
 					receiver.Tick()
 				}
 			case "eject":
 				err = controller.Eject()
 			default:
-				if controller.Source() == "idle" && request.command.Action == "play" {
+				if controller.Source() == "usb" {
+					if request.command.Action == "track" {
+						err = fmt.Errorf("select a USB song from Pick song")
+					} else {
+						err = backend.Control(request.command.Action, position)
+					}
+				} else if controller.Source() == "idle" && request.command.Action == "play" {
 					if err = receiver.Stop(); err == nil {
 						controller.UseCD()
 						receiver.Tick()

@@ -17,7 +17,18 @@
 <section><div id="now">Waiting for status</div><p id="disc" class="muted"></p><progress id="progress" value="0" max="1"></progress><p id="time">0:00 / 0:00</p>
 <div class="controls"><button data-action="previous">Previous</button><button data-action="play">Play</button><button data-action="pause">Pause</button><button data-action="stop">Stop</button><button data-action="next">Next</button><button data-action="eject">Eject</button></div>
 <p id="selection" class="muted" role="status"></p><p id="error" role="status"></p><p id="commandError" role="alert"></p></section>
-<h2>Tracks</h2><div id="tracks"></div><p class="muted"><small id="details"></small></p>
+<section>
+<button id="pickSong" aria-expanded="false" aria-controls="musicBrowser">Pick song · USB Music</button>
+<div id="musicBrowser" hidden>
+<h2>USB Music</h2>
+<label for="musicSearch">Search artist, album, or song</label>
+<input id="musicSearch" type="search" placeholder="Search artist, album, or song…" maxlength="512" style="display:block;width:100%;font:inherit;padding:12px;margin:12px 0">
+<div class="controls"><button id="mixAll" title="Shuffle every available song in your USB library">Mix all</button><button id="refreshLibrary">Refresh library</button></div>
+<p id="libraryStatus" role="status"></p>
+<div id="musicResults"></div>
+<div class="controls"><button id="musicPrevious" disabled>Previous page</button><span id="musicPage" role="status">Page 1 of 1</span><button id="musicNext" disabled>Next page</button></div>
+</div></section>
+<h2 id="tracksHeading">Tracks</h2><div id="tracks"></div><p class="muted"><small id="details"></small></p>
 </div>
 <div id="systemPanel" role="tabpanel" aria-labelledby="systemTab" hidden>
 <p id="systemConnection" class="muted" role="status">Loading system information…</p>
@@ -43,7 +54,7 @@
 <script>
 const $=id=>document.getElementById(id);
 const duration=n=>{n=Math.max(0,Math.floor(Number(n)||0));return Math.floor(n/60)+':'+String(n%60).padStart(2,'0')};
-let trackKey='',busy=false,coverURL='';
+let trackKey='',busy=false,coverURL='',currentSource='cd';
 const navigation=new TrackNavigation((track,discID)=>control('track',track,discID),track=>{$('selection').textContent=track===null?'':'Selecting track '+track+'…'});
 $('coverArt').onerror=()=>{$('coverArt').hidden=true;$('coverPlaceholder').hidden=false};
 $('coverArt').onload=()=>{$('coverArt').hidden=false;$('coverPlaceholder').hidden=true};
@@ -52,45 +63,47 @@ async function refresh(){
   const response=await fetch('/api/status',{signal:AbortSignal.timeout(4000)});
   if(!response.ok)throw new Error('Status unavailable');
   const s=await response.json(),m=s.mpd||{},tracks=s.disc.Tracks||[];
+  const usb=s.source==='usb';currentSource=s.source;
   const spotify=s.source==='spotify',idle=s.source==='idle',sp=s.spotify||{},now=sp.now||{};
-  $('source').textContent=idle?'Spotify disconnected · CD ready to start manually':spotify?'Source: Spotify · control playback from your phone':s.spotify?.enabled?'Source: CD · Spotify '+(s.spotify.running?'ready':'unavailable'):'Source: CD';
+  $('source').textContent=usb?'Source: USB Music':idle?'Spotify disconnected · CD ready to start manually':spotify?'Source: Spotify · control playback from your phone':s.spotify?.enabled?'Source: CD · Spotify '+(s.spotify.running?'ready':'unavailable'):'Source: CD';
   if(s.spotify?.error)$('source').textContent+=' · '+s.spotify.error;
-  $('switchCD').hidden=!spotify&&!idle;$('switchCD').textContent=idle?'Play CD':'Switch to CD';$('cdAlbum').hidden=false;
+  $('switchCD').hidden=!spotify&&!idle&&!usb;$('switchCD').textContent=idle?'Play CD':'Switch to CD';$('cdAlbum').hidden=false;
   document.querySelector('[data-action=play]').textContent=idle?'Play CD':'Play';
   const selecting=s.selection?.pending,desired=s.selection?.track;
   const stale=(!s.updated||Date.now()-Date.parse(s.updated)>5000)&&!selecting;
   $('connection').textContent=selecting?'Changing to track '+desired+'…':busy?'Waiting for player to acknowledge command…':stale?'Status delayed — player may be busy':'Connected · updated '+new Date(s.updated).toLocaleTimeString();
   const position=selecting?tracks.indexOf(desired):(m.song===undefined?-1:Number(m.song)),track=tracks[position];
   navigation.update(s.disc.ID,tracks,position);
-  if(stale||spotify||idle)navigation.cancel();
+  if(stale||spotify||idle||usb)navigation.cancel();
   const meta=s.metadata||{},names=meta.tracks||{},song=names[track];
-  $('albumTitle').textContent=spotify?(now.album||'Spotify'):meta.album||(s.disc.ID?'Unknown album':'Insert a CD');
-  $('albumArtist').textContent=spotify?(now.artist||''):meta.artist||(s.disc.ID?'Unknown artist':'');
-  $('metadataStatus').textContent=spotify?'Spotify Connect':meta.status==='loading'?'Looking up album…':meta.message||'';
-  $('albumSource').hidden=spotify||!meta.release_id;if(meta.release_id)$('albumSource').href='https://musicbrainz.org/release/'+encodeURIComponent(meta.release_id);
-  const nextCover=spotify?(now.cover||''):(meta.cover_url||'');
-  if(nextCover!==coverURL){coverURL=nextCover;$('coverArt').hidden=true;$('coverPlaceholder').hidden=false;if(nextCover){$('coverArt').alt=((spotify?now.album:meta.album)||'Album')+' cover';$('coverArt').src=nextCover}else{$('coverArt').removeAttribute('src')}}
-  $('now').textContent=idle?'Stopped · press Play CD':spotify?(({playing:'Playing',paused:'Paused',stopped:'Stopped',loading:'Loading',connected:'Connected'}[sp.playback]||'Spotify')+(now.title?' · '+now.title:'')):({play:'Playing',pause:'Paused',stop:'Stopped'}[m.state]||'Player unavailable')+(track?' · '+(song?.title||'Track '+track):'');
-  $('disc').textContent=idle?'CD autoplay is suspended until you press Play CD.':spotify?'CD autoplay is suspended. Switch to CD to start the disc from track 1.':s.disc.ID?(tracks.length?(song?.artist?song.artist+' · ':'')+tracks.length+' audio tracks':'No audio tracks'):'No disc detected';
+  $('albumTitle').textContent=usb?(s.usb?.album||'USB Music'):spotify?(now.album||'Spotify'):meta.album||(s.disc.ID?'Unknown album':'Insert a CD');
+  $('albumArtist').textContent=usb?(s.usb?.artist||''):spotify?(now.artist||''):meta.artist||(s.disc.ID?'Unknown artist':'');
+  $('metadataStatus').textContent=usb?'USB Music':spotify?'Spotify Connect':meta.status==='loading'?'Looking up album…':meta.message||'';
+  $('albumSource').hidden=usb||spotify||!meta.release_id;if(meta.release_id)$('albumSource').href='https://musicbrainz.org/release/'+encodeURIComponent(meta.release_id);
+  const nextCover=usb?(s.usb?.cover_url||''):spotify?(now.cover||''):(meta.cover_url||'');
+  if(nextCover!==coverURL){coverURL=nextCover;$('coverArt').hidden=true;$('coverPlaceholder').hidden=false;if(nextCover){$('coverArt').alt=((usb?s.usb?.album:spotify?now.album:meta.album)||'Album')+' cover';$('coverArt').src=nextCover}else{$('coverArt').removeAttribute('src')}}
+  $('now').textContent=usb?(({play:'Playing',pause:'Paused',stop:'Stopped'}[m.state]||'Player unavailable')+(s.usb?' · '+s.usb.title:' · Pick a song')):idle?'Stopped · press Play CD':spotify?(({playing:'Playing',paused:'Paused',stopped:'Stopped',loading:'Loading',connected:'Connected'}[sp.playback]||'Spotify')+(now.title?' · '+now.title:'')):({play:'Playing',pause:'Paused',stop:'Stopped'}[m.state]||'Player unavailable')+(track?' · '+(song?.title||'Track '+track):'');
+  $('disc').textContent=usb?'Playing from USB · '+s.usb_queue_length+(s.usb_mix?' songs in the mix':' songs in this album'):idle?'CD autoplay is suspended until you press Play CD.':spotify?'CD autoplay is suspended. Switch to CD to start the disc from track 1.':s.disc.ID?(tracks.length?(song?.artist?song.artist+' · ':'')+tracks.length+' audio tracks':'No audio tracks'):'No disc detected';
   $('time').textContent=spotify?duration(now.position_ms/1000)+' / '+duration(now.duration_ms/1000):idle?'':duration(m.elapsed)+' / '+duration(m.duration);
   $('progress').max=spotify?(now.duration_ms||1):(Number(m.duration)||1);$('progress').value=spotify?(now.position_ms||0):idle?0:Number(m.elapsed)||0;
   $('error').textContent=s.selection?.error||s.audio?.error||s.error||m.error||'';
-  $('details').textContent=s.device+(s.disc.ID?' · Disc '+s.disc.ID.slice(0,12):'')+(s.audio?.total_bytes?' · Audio cached '+Math.round(100*s.audio.cached_bytes/s.audio.total_bytes)+'%':'');
+  $('details').textContent=usb?'USB Music':s.device+(s.disc.ID?' · Disc '+s.disc.ID.slice(0,12):'')+(s.audio?.total_bytes?' · Audio cached '+Math.round(100*s.audio.cached_bytes/s.audio.total_bytes)+'%':'');
+  $('tracks').hidden=usb||spotify||idle;$('tracksHeading').hidden=usb||spotify||idle;
   const key=JSON.stringify([tracks,names]);
   if(key!==trackKey){$('tracks').replaceChildren(...tracks.map(n=>{const b=document.createElement('button');b.textContent=names[n]?.title?n+'. '+names[n].title+(names[n].artist?' · '+names[n].artist:''):'Track '+n;b.dataset.track=n;b.onclick=()=>control('track',n);return b}));trackKey=key}
   document.querySelectorAll('[data-track]').forEach(b=>b.setAttribute('aria-current',Number(b.dataset.track)===track?'true':'false'));
-  document.querySelectorAll('[data-action],[data-track]').forEach(b=>b.disabled=busy||stale||(spotify&&!['source-cd','eject'].includes(b.dataset.action))||(idle&&!['source-cd','play','eject'].includes(b.dataset.action))||(!tracks.length&&!['source-cd','stop','eject',...(idle?['play']:[])].includes(b.dataset.action)));
+  document.querySelectorAll('[data-action],[data-track]').forEach(b=>b.disabled=busy||stale||(spotify&&!['source-cd','eject'].includes(b.dataset.action))||(idle&&!['source-cd','play','eject'].includes(b.dataset.action))||(usb&&!!b.dataset.track)||(!usb&&!tracks.length&&!['source-cd','stop','eject',...(idle?['play']:[])].includes(b.dataset.action)));
  }catch(e){navigation.cancel();$('connection').textContent='Cannot reach player — retrying…';document.querySelectorAll('[data-action],[data-track]').forEach(b=>b.disabled=true)}
 }
-async function control(action,track,discID){
+async function control(action,track,discID,songID){
  if(busy)return;
  navigation.cancel();
  busy=true;document.querySelectorAll('[data-action],[data-track]').forEach(b=>b.disabled=true);$('commandError').textContent='';
- try{const r=await fetch('/api/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,track,disc_id:discID}),signal:AbortSignal.timeout(30000)});if(!r.ok)throw new Error(await r.text())}
+ try{const r=await fetch('/api/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,track,disc_id:discID,song_id:songID}),signal:AbortSignal.timeout(30000)});if(!r.ok)throw new Error(await r.text())}
  catch(e){$('commandError').textContent=e.message}
  finally{busy=false;await refresh()}
 }
-document.querySelectorAll('[data-action]').forEach(b=>b.onclick=()=>{if(busy)return;const action=b.dataset.action;if(action==='next'||action==='previous'){navigation.step(action==='next'?1:-1)}else{control(action)}});
+document.querySelectorAll('[data-action]').forEach(b=>b.onclick=()=>{if(busy)return;const action=b.dataset.action;if(currentSource!=='usb'&&(action==='next'||action==='previous')){navigation.step(action==='next'?1:-1)}else{control(action)}});
 const tabs=[...document.querySelectorAll('[data-tab]')];
 function selectTab(tab){if(tab.id==='settingsTab')loadOutputs();tabs.forEach(b=>{const active=b===tab;b.setAttribute('aria-selected',String(active));b.tabIndex=active?0:-1;$(b.dataset.tab).hidden=!active})}
 tabs.forEach((tab,i)=>{tab.onclick=()=>selectTab(tab);tab.onkeydown=e=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(e.key)){e.preventDefault();const target=tabs[e.key==='Home'?0:e.key==='End'?tabs.length-1:(i+(e.key==='ArrowRight'?1:tabs.length-1))%tabs.length];selectTab(target);target.focus()}}});
@@ -135,4 +148,5 @@ async function systemPoll(){
 }systemPoll();
 async function poll(){await refresh();setTimeout(poll,1000)}poll();
 </script>
+<script src="/library.js"></script>
 </html>

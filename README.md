@@ -213,7 +213,7 @@ Sources: [MusicBrainz disc IDs](https://musicbrainz.org/doc/Disc_ID_Calculation)
 
 ```sh
 sudo apt update
-sudo apt install mpd mpc eject alsa-utils python3 cd-paranoia
+sudo apt install mpd mpc eject alsa-utils python3 python3-mutagen cd-paranoia
 mpd --version
 ls -l /dev/sr*
 aplay -l
@@ -710,3 +710,104 @@ Existing custom outputs are labelled **CD only** and leave Spotify's destination
 unchanged. A brief interruption during switching is normal. No root access is
 used by web requests: switching uses MPD's output protocol and the app's own
 Spotify process. MPD configuration is only changed by the installation script.
+
+
+## USB MP3 library
+
+The player can index a mounted USB drive into SQLite on the Pi. Open **Pick song ·
+USB Music**, then type an artist, album, song title, or a combination in the single
+search field. Search ignores case and accents; every word must match somewhere
+in the title, artist, or album. Results show 20 songs per page, with Previous/Next page buttons and a page indicator. Select a song to
+start it and queue the other songs from the same album and folder in track order.
+Previous/Next move within that queue. **Mix all** shuffles every available song in
+the USB library into a new queue, regardless of the current search or page. Each
+song appears once; the mix stops at the end. The **Shuffle** button on `/display`
+starts the same USB mix, including when CD or Spotify is selected. Playback uses
+your selected MPD output.
+
+MP3 tags supply the title, artist, album, track number, and duration. Missing tags
+fall back to the filename, “Unknown artist”, and folder name. Embedded JPEG/PNG
+artwork takes priority over `cover.jpg`, `cover.jpeg`, `cover.png`, `folder.jpg`,
+`folder.jpeg`, or `folder.png` (case insensitive). Artwork is deduplicated in the
+database and limited to 5 MiB per image. The main UI and `/display` show the
+currently playing USB song and artwork. The display also shows a local clock,
+elapsed/total song time, and a progress bar for USB, CD, and Spotify playback.
+The display stays within 320×240 pixels, even in a larger browser window. Long
+titles wrap to two lines and then truncate; artist and album names use ellipses. Metadata is read with
+[Mutagen](https://mutagen.readthedocs.io/en/latest/api/mp3.html); SQLite uses
+Python's standard library, so the Go binary still builds without CGO.
+
+### Set up the Pi
+
+Install the metadata reader before updating/installing the new player:
+
+```sh
+sudo apt install python3-mutagen
+```
+
+The default music location is `/media/cdplayer`. Mount your USB partition there
+and ensure the `cdplayer` service user can list folders and read the music files.
+For an initial check, identify the USB partition with `lsblk -f`, then mount it
+using its filesystem UUID (replace `YOUR_USB_UUID`):
+
+```sh
+sudo mkdir -p /media/cdplayer
+sudo mount -o ro /dev/disk/by-uuid/YOUR_USB_UUID /media/cdplayer
+sudo -u cdplayer ls /media/cdplayer
+```
+
+Configure a persistent mount through your Pi's `/etc/fstab` if it should survive
+reboot; use the filesystem UUID and `nofail` so an absent drive does not prevent
+boot. The application scans mounted files; it does not mount or format drives.
+For FAT/exFAT, mount permissions must allow the service user to read the files;
+for Linux filesystems, the directory and file permissions must allow it. The MPD
+user does not need access to the drive: the app streams selected MP3s to local
+MPD over a separate loopback HTTP server with range support.
+
+To use another location, create `/etc/cdplayer/music.conf` with:
+
+```ini
+CDPLAYER_MUSIC_DIR=/your/mounted/music
+```
+
+Both supplied systemd units read this optional file. Restart `cdplayer` after
+changing it. Existing Spotify configuration stays in its own file. For a manual
+run, use `-music-dir=/your/mounted/music`; `-music-dir=` disables the USB library.
+Choose a mount outside `/home`, because the supplied service protects home
+directories. USB playback requires MPD on this Pi and a writable `-cache-dir`.
+
+The library scans at startup, every minute, and when you press **Refresh library**.
+The index lives at `<cache-dir>/library.sqlite` (normally
+`/var/cache/cdplayer/library.sqlite` under the supplied services). Scans update
+changed files, remove missing entries after a successful scan, and skip symlinks.
+The USB filesystem is never modified. An unavailable directory or failed scan
+shows an error and retains the previous index; an empty mounted directory clears
+its entries. A removed song cannot be played even if an old search result remains
+visible. Scanning and searching run separately from the playback loop.
+
+Selecting USB music disconnects Spotify and suspends CD autoplay. Inserting a CD,
+stopping USB playback, or unplugging the drive does not start the CD. Choose
+**Switch to CD** to return, or reconnect Spotify to take over playback. Eject
+opens the CD tray without stopping USB music. After an MPD restart that loses its
+queue, pick a USB song again. As before, restarting the application starts in CD
+mode.
+
+Library checks (Python tests require `python3-mutagen`):
+
+```sh
+go test ./...
+python3 -m unittest discover -s internal/library -p '*_test.py'
+node --test internal/web/*.test.cjs
+```
+
+An optional integration smoke test generates MP3 fixtures with `ffmpeg` and runs
+the built application against a simulated MPD on localhost:
+
+```sh
+go build -o /tmp/cdplayer-usb ./cmd/cdplayer
+python3 scripts/test-usb.py /tmp/cdplayer-usb
+```
+
+On the Pi, also check real MP3 playback, pause/resume and album navigation, then
+unplug/reinsert the USB drive and refresh. Try switching among USB, CD, and Spotify
+with a disc inserted to confirm the selected output and source handoffs.

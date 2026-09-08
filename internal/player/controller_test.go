@@ -372,3 +372,60 @@ func TestPrepareFailureDoesNotQueueAndStopsFailedSource(t *testing.T) {
 		t.Fatalf("failed source replayed: clears=%d starts=%d", b.clears, len(b.starts))
 	}
 }
+
+func TestUSBPlaybackSuspendsCDThroughDisconnectAndReturnsManually(t *testing.T) {
+	ctx := context.Background()
+	d := &fakeDrive{disc: disc.Disc{ID: "a", Tracks: []int{1}}}
+	b := &fakeBackend{}
+	released := 0
+	c := &Controller{Drive: d, Backend: b, Release: func() { released++ }}
+	if err := c.Step(ctx); err != nil {
+		t.Fatal(err)
+	}
+	c.UseUSB()
+	d.err = errors.New("CD drive unplugged")
+	for i := 0; i < 3; i++ {
+		b.fresh = true
+		c.SpotifyDisconnected()
+		if err := c.Step(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if c.Source() != "usb" || len(b.starts) != 1 || b.clears != 0 || released != 1 {
+		t.Fatalf("USB changed CD queue: %+v", b)
+	}
+	b.healthErr = errors.New("USB removed")
+	if c.Step(ctx) == nil || c.Source() != "usb" {
+		t.Fatal("USB error lost or started CD")
+	}
+	b.healthErr = nil
+	if err := c.UseSpotify(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if c.Source() != "spotify" || b.clears != 1 {
+		t.Fatal("Spotify did not take over USB")
+	}
+	c.UseUSB()
+	d.err = nil
+	d.disc = disc.Disc{ID: "b", Tracks: []int{1, 2}}
+	c.UseCD()
+	if err := c.Step(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if c.Source() != "cd" || len(b.starts) != 2 {
+		t.Fatal("manual CD return failed")
+	}
+}
+
+func TestUSBEjectDoesNotStopMusic(t *testing.T) {
+	b := &fakeBackend{}
+	ejected := false
+	c := &Controller{Backend: b, Drive: &ejectDrive{eject: func() error { ejected = true; return nil }}}
+	c.UseUSB()
+	if err := c.Eject(); err != nil {
+		t.Fatal(err)
+	}
+	if !ejected || b.clears != 0 || c.Source() != "usb" {
+		t.Fatal("eject interrupted USB")
+	}
+}

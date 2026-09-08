@@ -323,3 +323,21 @@ func TestCachedAudioURLsReplaceCDDAQueue(t *testing.T) {
 		t.Fatalf("URLs: %v", added)
 	}
 }
+
+func TestUSBAlbumStartsSelectedSong(t *testing.T) {
+	c, done := serve(t, func(string) string { return "OK\n" })
+	if _, err := c.Connect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.StartURLs([]string{"http://127.0.0.1:123/music/a.mp3", "http://127.0.0.1:123/music/b.mp3"}, 1); err != nil {
+		t.Fatal(err)
+	}
+	if c.Status()["song"] != "1" || c.Status()["state"] != "play" {
+		t.Fatal("selected song not reflected in status")
+	}
+	c.Close()
+	cmds := <-done
+	if cmds[len(cmds)-1] != "play 1" {
+		t.Fatalf("commands: %v", cmds)
+	}
+}

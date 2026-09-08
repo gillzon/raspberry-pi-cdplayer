@@ -15,7 +15,7 @@ if (( EUID == 0 )); then
     echo "Run as your normal user, without sudo. The install steps will request sudo." >&2
     exit 1
 fi
-for dependency in git go sudo systemctl flock getent eject; do
+for dependency in git go sudo systemctl flock getent eject python3; do
     if ! command -v "$dependency" >/dev/null 2>&1; then
         echo "Missing command: $dependency. Install it before running this script." >&2
         exit 1
@@ -23,6 +23,11 @@ for dependency in git go sudo systemctl flock getent eject; do
 done
 if ! command -v mpd >/dev/null 2>&1 || ! id mpd >/dev/null 2>&1; then
     echo "Install and configure MPD first (sudo apt install mpd mpc). See README.md." >&2
+    exit 1
+fi
+
+if ! python3 -c 'import sqlite3, mutagen' >/dev/null 2>&1; then
+    echo "USB library dependencies missing. Run: sudo apt install python3-mutagen" >&2
     exit 1
 fi
 
@@ -49,6 +54,7 @@ build_dir="$(mktemp -d)"
 trap 'rm -rf -- "$build_dir"' EXIT
 echo "Building and testing $(git rev-parse --short HEAD)…"
 go test ./...
+python3 -m unittest discover -s internal/library -p '*_test.py'
 go build -trimpath -o "$build_dir/cdplayer" ./cmd/cdplayer
 "$build_dir/cdplayer" -check-audio
 cp deploy/cdplayer-system-mpd.service "$build_dir/cdplayer.service"

@@ -40,6 +40,10 @@ func TestControls(t *testing.T) {
 	}{
 		{`{"action":"track","track":12}`, 204, true},
 		{`{"action":"stop"}`, 204, true},
+		{`{"action":"usb-mix"}`, 204, true},
+		{`{"action":"usb-play","song_id":"` + strings.Repeat("a", 64) + `"}`, 204, true},
+		{`{"action":"usb-play","song_id":"../../etc/passwd"}`, 400, false},
+		{`{"action":"usb-play"}`, 400, false},
 		{`{"action":"eject"}`, 204, true},
 		{`{"action":"track","track":0}`, 400, false},
 		{`{"action":"track","track":100}`, 400, false},

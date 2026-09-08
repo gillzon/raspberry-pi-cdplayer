@@ -135,10 +135,28 @@ func (c *Client) Clear() error {
 			return err
 		}
 	}
+	c.lastStatus = map[string]string{"state": "stop"}
 	return nil
 }
 
 func (c *Client) Start(tracks []int) error {
+	urls := make([]string, len(tracks))
+	for i, track := range tracks {
+		urls[i] = c.trackURI(track)
+	}
+	return c.StartURLs(urls, 0)
+}
+
+// StartURLs replaces the queue and starts the selected song in its album.
+func (c *Client) StartURLs(urls []string, position int) error {
+	if position < 0 || position >= len(urls) {
+		return fmt.Errorf("invalid song position")
+	}
+	for _, uri := range urls {
+		if strings.ContainsAny(uri, "\r\n") {
+			return fmt.Errorf("invalid song URL")
+		}
+	}
 	if err := c.Clear(); err != nil {
 		return err
 	}
@@ -147,13 +165,12 @@ func (c *Client) Start(tracks []int) error {
 			return err
 		}
 	}
-	for _, track := range tracks {
-		uri := c.trackURI(track)
+	for _, uri := range urls {
 		if _, err := c.command("add " + strconv.Quote(uri)); err != nil {
 			return err
 		}
 	}
-	_, err := c.command("play 0")
+	err := c.Control("track", position)
 	if err == nil {
 		c.requestedAt = time.Now()
 	}
