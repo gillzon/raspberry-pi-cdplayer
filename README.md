@@ -577,11 +577,100 @@ After Spotify disconnects, Play becomes available without automatically starting
 the CD. The full web interface remains at `/`.
 
 This is a browser view, not a TFT driver. Display output, touch calibration,
-physical GPIO key mapping, and automatic kiosk startup depend on the exact HAT
-model and installed Raspberry Pi OS/display stack and are not configured yet.
+physical GPIO key mapping depend on the exact HAT model and installed Raspberry
+Pi OS/display stack. For the configured Waveshare/X11 setup, kiosk startup and
+a branded boot splash can be installed as described below.
 Preview with a 320×240 browser viewport. Keyboard equivalents for testing are
 Left/Right arrows (previous/next), P (pause), and Enter (play); these do not read
 GPIO buttons. Do not guess GPIO pins from the screen size alone.
+
+### Comreact boot logo and automatic display startup
+
+For the **Raspberry Pi 4 with a working Waveshare 2.8inch RPi LCD (A) V2**, the
+installer uses `comreact-logo-WHITE.png` from the repository root as a white logo
+on black. It installs a Plymouth boot theme and a dedicated X11 kiosk session.
+The same logo remains visible while Chromium starts and the player loads; the
+local startup page reveals `/display` only after it renders its first successful
+`/api/status` response. An unavailable app keeps the logo on screen and retries.
+
+Prerequisites: 64-bit Raspberry Pi OS Trixie/Bookworm with the automatic boot image
+at `/boot/firmware/initramfs8`, Chromium, Go, the existing
+`cdplayer.service`, working LightDM desktop auto-login, and the SPI LCD registered
+as `/dev/fb0` (`fb_st7789v`). The existing
+`/etc/X11/xorg.conf.d/98-spi-screen.conf` must select `fbdev` and `/dev/fb0`.
+Get the desktop and touch working first. The installer preserves that Xorg file
+and touch calibration, and reads its `Rotate` option for the early splash.
+
+Copy/sync the updated checkout **including the root PNG** to the Pi. From that
+checkout, run as the desktop auto-login user (`gillzon`), **without sudo**:
+
+```sh
+bash scripts/setup-boot-splash.sh
+sudo reboot
+```
+
+The script refuses to run on a workstation. It checks the target, tests and
+builds the app, requests sudo, installs the required packages, and installs the
+new binary without changing your CD/MPD/Spotify service flags. It adds the SPI
+display modules to initramfs, enables the Plymouth splash in the existing kernel
+command line, rebuilds initramfs, and checks that the firmware's `initramfs8`
+contains the theme. Boot options such as `root=`, console
+devices, and display overlays are preserved. The firmware rainbow is disabled.
+
+LightDM auto-login changes to **CD Player Kiosk**, using Openbox without LXDE's
+panel/file-manager desktop. The existing personal autostart files remain in place
+but are not used by this session. The launcher uses the existing dedicated
+`~/.config/chromium-cdplayer` profile and `--password-store=basic`; do not save
+passwords in this profile. Chromium restarts if it exits. Its local startup page
+loads without the app or internet, then displays the real player in a full-screen
+frame. Direct access to `/display` on other devices continues to work normally.
+
+The logo cannot appear on this SPI LCD until Linux initializes its driver.
+Plymouth and Xorg also need to transfer ownership of the screen, so a brief black
+transition may still occur; this is not a replacement for the Pi's firmware.
+The early theme, framebuffer rotation and physical boot transition must be
+verified on the Pi. After installation, reboot and check both the logo's
+orientation and the controls. If you change Xorg rotation later, rerun the setup
+script so Plymouth uses the same orientation.
+
+Diagnostics over SSH:
+
+```sh
+cat ~/.local/state/cdplayer-kiosk.log
+systemctl status lightdm cdplayer --no-pager -l
+curl -fsS http://localhost:8080/display | grep 'cdplayer:display-ready'
+plymouth-set-default-theme
+```
+
+If the logo stays visible, inspect `journalctl -u cdplayer -b --no-pager` and
+confirm the updated app is running. The startup wrapper intentionally does not
+mistake an HTTP error page or a mere browser window for a ready display.
+
+Every installation prints a dated backup under
+`/var/lib/cdplayer-boot-backups/`, covering the replaced files and binary. To
+restore the setup from immediately before that installation, use the exact
+printed backup directory:
+
+```sh
+sudo python3 scripts/restore-boot-splash.py /var/lib/cdplayer-boot-backups/PRINTED-DIRECTORY
+sudo reboot
+```
+
+Restoration leaves installed packages available and restores the backed-up
+configuration, so later manual edits to those files would also be replaced.
+Normal `scripts/update.sh` app updates preserve the installed boot configuration;
+rerun `setup-boot-splash.sh` when changing the logo or boot assets.
+
+Boot configuration and browser handoff checks (no system changes):
+
+```sh
+python3 -m unittest discover -s scripts -p 'test_boot_splash.py'
+node --test internal/web/boot.test.cjs
+```
+
+References: [Plymouth theme installation](https://manpages.debian.org/trixie/plymouth/plymouth-set-default-theme.1.en.html),
+[LightDM session configuration](https://github.com/canonical/lightdm/blob/main/data/lightdm.conf),
+and [Waveshare's LCD instructions](https://www.waveshare.com/wiki/2.8inch_RPi_LCD_%28A%29).
 
 
 Track selections are accepted into a bounded queue immediately; pending status

@@ -1,0 +1,16 @@
+# The installer replaces @ROTATION@ with the existing Xorg rotation in radians.
+Window.SetBackgroundTopColor(0, 0, 0);
+Window.SetBackgroundBottomColor(0, 0, 0);
+logo = Image("logo.png");
+width = logo.GetWidth();
+height = logo.GetHeight();
+# Rotate a square canvas to avoid clipping the long wordmark during rotation.
+side = Math.Max(width, height);
+logo = logo.Scale(side, side).Rotate(@ROTATION@);
+if (@TURNED@) logo = logo.Scale(height, width);
+else logo = logo.Scale(width, height);
+scale = Math.Min(Window.GetWidth() / logo.GetWidth(), Window.GetHeight() / logo.GetHeight());
+logo = logo.Scale(logo.GetWidth() * scale, logo.GetHeight() * scale);
+sprite = Sprite(logo);
+sprite.SetX((Window.GetWidth() - logo.GetWidth()) / 2);
+sprite.SetY((Window.GetHeight() - logo.GetHeight()) / 2);

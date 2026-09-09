@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=Comreact CD Player
+Description=Comreact logo while the CD player starts
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/cdplayer
+ScriptFile=/usr/share/plymouth/themes/cdplayer/cdplayer.script

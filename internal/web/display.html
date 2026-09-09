@@ -42,7 +42,7 @@ const $=id=>document.getElementById(id);
 const seconds=value=>{const n=Number(value);return Number.isFinite(n)?Math.max(0,n):0};
 const duration=value=>{const n=Math.floor(seconds(value));return Math.floor(n/60)+':'+String(n%60).padStart(2,'0')};
 const buttons=['previous','pause','play','next','shuffle'];
-let state=null,busy=false,coverURL='',failure='';
+let state=null,busy=false,coverURL='',failure='',bootReady=false;
 const navigation=new TrackNavigation((track,discID)=>send('track',track,discID),track=>{if(track!==null)$('message').textContent='Selecting track '+track+'…'});
 $('cover').onload=()=>{$('cover').hidden=false;$('placeholder').hidden=true};
 $('cover').onerror=()=>{$('cover').hidden=true;$('placeholder').hidden=false};
@@ -70,6 +70,9 @@ function render(s){
  $('progress').max=total||1;$('progress').value=total?played:0;
  $('progress').setAttribute('aria-valuetext',duration(played)+(total?' of '+duration(total):' elapsed; duration unknown'));
  for(const action of buttons)$(action).disabled=busy||stale||(action!=='shuffle'&&(spotify||(!usb&&(idle?action!=='play':!tracks.length))));
+ // The installed local boot page keeps its logo visible until this first render.
+ // It has an opaque file:// origin; send only a readiness token, never state.
+ if(!bootReady){bootReady=true;if(window.parent!==window)window.parent.postMessage('cdplayer:display-ready','*')}
 }
 async function refresh(){
  try{const r=await fetch('/api/status',{signal:AbortSignal.timeout(4000)});if(!r.ok)throw Error('Status unavailable');render(await r.json())}

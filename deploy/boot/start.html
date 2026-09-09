@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Comreact CD Player</title>
+<style>
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#000;color:#fff}
+body{display:grid;place-items:center}
+#logo{width:100%;height:100%;object-fit:contain}
+#player{position:fixed;inset:0;width:100%;height:100%;border:0;opacity:0;pointer-events:none;background:#000}
+body.ready #player{opacity:1;pointer-events:auto}
+body.ready #logo{visibility:hidden}
+</style>
+<img id="logo" src="logo.png" alt="Comreact">
+<iframe id="player" title="CD player" tabindex="-1"></iframe>
+<script>
+const player=document.getElementById('player');
+const playerURL='http://localhost:8080/display';
+let ready=false;
+// The local file works even when the application has not started yet. An HTTP
+// error page's load event is NOT readiness: only the display can announce that.
+window.addEventListener('message',event=>{
+  if(ready||event.origin!=='http://localhost:8080'||event.source!==player.contentWindow||event.data!=='cdplayer:display-ready')return;
+  ready=true;
+  clearInterval(retry);
+  document.body.classList.add('ready');
+  player.removeAttribute('tabindex');
+  player.focus();
+});
+function connect(){if(!ready)player.src=playerURL}
+const retry=setInterval(connect,8000);
+connect();
+</script>
+</html>

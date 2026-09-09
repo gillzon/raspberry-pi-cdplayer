@@ -1,0 +1,28 @@
+#!/bin/sh
+# A dedicated X11 session: no desktop panel or file-manager window over the logo.
+set -eu
+mkdir -p "$HOME/.local/state"
+exec >>"$HOME/.local/state/cdplayer-kiosk.log" 2>&1
+xset s off || true
+xset -dpms || true
+xset s noblank || true
+feh --no-fehbg --image-bg black --bg-max /usr/share/cdplayer/boot/logo.png
+openbox &
+wm_pid=$!
+browser_pid=
+cleanup() {
+    if [ -n "$browser_pid" ]; then kill "$browser_pid" 2>/dev/null || true; fi
+    kill "$wm_pid" 2>/dev/null || true
+}
+trap cleanup EXIT
+trap 'exit 0' HUP INT TERM
+while :; do
+    /usr/bin/chromium --kiosk --no-first-run --noerrdialogs \
+        --password-store=basic --ozone-platform=x11 \
+        --user-data-dir="$HOME/.config/chromium-cdplayer" \
+        file:///usr/share/cdplayer/boot/start.html &
+    browser_pid=$!
+    wait "$browser_pid" || true
+    browser_pid=
+    sleep 2
+done

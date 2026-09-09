@@ -1,0 +1,5 @@
+[Desktop Entry]
+Name=CD Player Kiosk
+Comment=Comreact splash followed by the player display
+Type=Application
+Exec=/usr/local/bin/cdplayer-kiosk-session
