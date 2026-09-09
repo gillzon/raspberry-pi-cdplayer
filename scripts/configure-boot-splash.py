@@ -64,7 +64,25 @@ def splash_script(template, xorg):
     return template.replace("@ROTATION@", str(angle)).replace("@TURNED@", "1" if rotation in ("CW", "CCW") else "0")
 
 
-def preflight(user):
+def display_config(text, rotation=None):
+    if not text:
+        text = 'Section "Device"\n    Identifier "SPI Screen"\n    Driver "fbdev"\n    Option "fbdev" "/dev/fb0"\nEndSection\n'
+    if not re.search(r'Driver\s+"fbdev"', text, re.I) or '/dev/fb0' not in text:
+        raise ValueError("Existing 98-spi-screen.conf does not select fbdev and /dev/fb0.")
+    if rotation is None:
+        return text
+    # This project-owned file should contain one Device section. Avoid changing
+    # unrelated screens if somebody has expanded it into a multi-screen setup.
+    if len(re.findall(r'^\s*Section\b', text, re.M | re.I)) != 1:
+        raise ValueError("Set rotation manually in the multi-section Xorg configuration.")
+    text = re.sub(r'^\s*Option\s+"Rotate"[^\n]*\n?', '', text, flags=re.M | re.I)
+    value = {"right": "CW", "left": "CCW", "inverted": "UD", "normal": None}[rotation]
+    if value:
+        text = re.sub(r'^(\s*EndSection)', f'    Option "Rotate" "{value}"\n\\1', text, flags=re.M | re.I)
+    return text
+
+
+def preflight(user, display_only=False, rotation=None):
     model = Path("/proc/device-tree/model")
     if not model.exists() or "Raspberry Pi 4 Model B" not in model.read_text():
         raise ValueError("Run on the Raspberry Pi 4, not the workstation.")
@@ -76,16 +94,17 @@ def preflight(user):
     account = pwd.getpwnam(user)
     if account.pw_uid == 0 or not re.fullmatch(r"[a-z_][a-z0-9_-]*", user):
         raise ValueError("Select the normal desktop auto-login user, e.g. gillzon.")
-    xorg = Path("/etc/X11/xorg.conf.d/98-spi-screen.conf").read_text()
-    if not re.search(r'Driver\s+"fbdev"', xorg, re.I) or '/dev/fb0' not in xorg:
-        raise ValueError("Configure and verify the LCD's X11 fbdev session first.")
-    boot_cmdline((BOOT / "cmdline.txt").read_text())
-    if not (BOOT / "initramfs8").is_file():
-        raise ValueError("Expected the Pi 4's automatic initramfs at /boot/firmware/initramfs8.")
+    xorg_path = Path("/etc/X11/xorg.conf.d/98-spi-screen.conf")
+    xorg = display_config(xorg_path.read_text() if xorg_path.exists() else "", rotation)
+    if not display_only:
+        boot_cmdline((BOOT / "cmdline.txt").read_text())
+        if not (BOOT / "initramfs8").is_file():
+            raise ValueError("Expected the Pi 4's automatic initramfs at /boot/firmware/initramfs8.")
     if not (REPO / "comreact-logo-WHITE.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n"):
         raise ValueError("The root logo must be a PNG file.")
-    subprocess.run(["systemctl", "is-active", "--quiet", "cdplayer"], check=True)
-    subprocess.run(["systemctl", "is-active", "--quiet", "lightdm"], check=True)
+    # A new Pi can still be in console mode, with LightDM absent or stopped.
+    # Playback must already have a service, but it need not be running yet.
+    subprocess.run(["systemctl", "cat", "cdplayer.service"], check=True, stdout=subprocess.DEVNULL)
     return xorg
 
 
@@ -94,10 +113,12 @@ def main():
     parser.add_argument("--user", required=True)
     parser.add_argument("--check", action="store_true")
     parser.add_argument("--binary", type=Path)
+    parser.add_argument("--display-only", action="store_true", help="Set up X11 auto-login and the player without modifying the early boot splash")
+    parser.add_argument("--rotate", choices=("normal", "right", "left", "inverted"), help="Set screen rotation; omit to preserve the existing rotation")
     args = parser.parse_args()
-    xorg = preflight(args.user)
+    xorg = preflight(args.user, args.display_only, args.rotate)
     if args.check:
-        print("Pi 4, Waveshare framebuffer, X11 configuration and services verified.")
+        print("Pi 4, Waveshare framebuffer, desktop user and installed player service verified.")
         return
     if os.geteuid() != 0 or args.binary is None:
         parser.error("Use bash scripts/setup-boot-splash.sh as the desktop user.")
@@ -106,8 +127,11 @@ def main():
         raise ValueError("Build the updated player with display readiness support first.")
 
     subprocess.run(["apt-get", "update"], check=True)
-    subprocess.run(["apt-get", "install", "-y", "plymouth", "plymouth-themes",
-                    "initramfs-tools", "feh", "openbox", "x11-xserver-utils", "chromium"], check=True)
+    packages = ["lightdm", "xserver-xorg", "xserver-xorg-video-fbdev", "xserver-xorg-input-evdev",
+                "feh", "openbox", "x11-xserver-utils", "chromium"]
+    if not args.display_only:
+        packages += ["plymouth", "plymouth-themes", "initramfs-tools"]
+    subprocess.run(["apt-get", "install", "-y", *packages], check=True)
 
     backup = Path(tempfile.mkdtemp(prefix=datetime.datetime.now().strftime("%Y%m%d-%H%M%S-"),
                                   dir=make_backup_dir()))
@@ -141,10 +165,10 @@ def main():
     assets = REPO / "deploy/boot"
     logo = (REPO / "comreact-logo-WHITE.png").read_bytes()
     print(f"Configuration backup: {backup}", flush=True)
-    for name, content in {
+    for name, content in ({} if args.display_only else {
         "logo.png": logo, "cdplayer.plymouth": (assets / "cdplayer.plymouth").read_bytes(),
         "cdplayer.script": splash_script((assets / "cdplayer.script").read_text(), xorg),
-    }.items():
+    }).items():
         write(Path("/usr/share/plymouth/themes/cdplayer") / name, content)
     write(Path("/usr/share/cdplayer/boot/logo.png"), logo)
     write(Path("/usr/share/cdplayer/boot/start.html"), (assets / "start.html").read_bytes())
@@ -161,28 +185,29 @@ def main():
         config = set_ini(config, "Seat:seat0", settings)
     # Activate this session only after the rebuilt application passes its check.
     lightdm_config = config
-    write(BOOT / "cmdline.txt", boot_cmdline((BOOT / "cmdline.txt").read_text()))
-    config_txt = (BOOT / "config.txt").read_text()
-    marker = "# Comreact boot splash (managed by setup-boot-splash.sh)"
-    if marker not in config_txt:
-        write(BOOT / "config.txt", config_txt.rstrip() + f"\n\n[all]\n{marker}\nauto_initramfs=1\ndisable_splash=1\n")
-    modules = Path("/etc/initramfs-tools/modules")
-    module_text = modules.read_text() if modules.exists() else ""
-    for module in ("spi_bcm2835", "fb_st7789v"):
-        if not re.search(r"^" + module + r"(?:\s|$)", module_text, re.M):
-            module_text = module_text.rstrip() + "\n" + module + "\n"
-    write(modules, module_text)
-    plymouth_config = Path("/etc/plymouth/plymouthd.conf")
-    text = plymouth_config.read_text() if plymouth_config.exists() else ""
-    write(plymouth_config, set_ini(text, "Daemon", {"Theme": "cdplayer", "ShowDelay": "0", "DeviceTimeout": "8"}))
-    subprocess.run(["plymouth-set-default-theme", "cdplayer"], check=True)
-    subprocess.run(["update-initramfs", "-u", "-k", "all"], check=True)
-    # Verify the image the Pi's firmware will actually load, not only /boot's
-    # intermediate initrd. Raspberry Pi OS's initramfs hook must copy it here.
-    contents = subprocess.check_output(["lsinitramfs", str(BOOT / "initramfs8")], text=True).splitlines()
-    for name in ("logo.png", "cdplayer.plymouth", "cdplayer.script"):
-        if not any(line.endswith("/plymouth/themes/cdplayer/" + name) for line in contents):
-            raise RuntimeError(f"Boot initramfs is missing {name}; check the Raspberry Pi OS initramfs hook. Backup: {backup}")
+    if not args.display_only:
+        write(BOOT / "cmdline.txt", boot_cmdline((BOOT / "cmdline.txt").read_text()))
+        config_txt = (BOOT / "config.txt").read_text()
+        marker = "# Comreact boot splash (managed by setup-boot-splash.sh)"
+        if marker not in config_txt:
+            write(BOOT / "config.txt", config_txt.rstrip() + f"\n\n[all]\n{marker}\nauto_initramfs=1\ndisable_splash=1\n")
+        modules = Path("/etc/initramfs-tools/modules")
+        module_text = modules.read_text() if modules.exists() else ""
+        for module in ("spi_bcm2835", "fb_st7789v"):
+            if not re.search(r"^" + module + r"(?:\s|$)", module_text, re.M):
+                module_text = module_text.rstrip() + "\n" + module + "\n"
+        write(modules, module_text)
+        plymouth_config = Path("/etc/plymouth/plymouthd.conf")
+        text = plymouth_config.read_text() if plymouth_config.exists() else ""
+        write(plymouth_config, set_ini(text, "Daemon", {"Theme": "cdplayer", "ShowDelay": "0", "DeviceTimeout": "8"}))
+        subprocess.run(["plymouth-set-default-theme", "cdplayer"], check=True)
+        subprocess.run(["update-initramfs", "-u", "-k", "all"], check=True)
+        # Verify the image the Pi's firmware will actually load, not only /boot's
+        # intermediate initrd. Raspberry Pi OS's initramfs hook must copy it here.
+        contents = subprocess.check_output(["lsinitramfs", str(BOOT / "initramfs8")], text=True).splitlines()
+        for name in ("logo.png", "cdplayer.plymouth", "cdplayer.script"):
+            if not any(line.endswith("/plymouth/themes/cdplayer/" + name) for line in contents):
+                raise RuntimeError(f"Boot initramfs is missing {name}; check the Raspberry Pi OS initramfs hook. Backup: {backup}")
 
     write(Path("/usr/local/bin/cdplayer"), binary, 0o755)
     subprocess.run(["systemctl", "enable", "cdplayer", "lightdm"], check=True)
@@ -198,7 +223,12 @@ def main():
         time.sleep(0.5)
     else:
         raise RuntimeError(f"Updated display did not respond. Backup: {backup}")
+    xorg_path = Path("/etc/X11/xorg.conf.d/98-spi-screen.conf")
+    if not xorg_path.exists() or xorg_path.read_text() != xorg:
+        write(xorg_path, xorg)
     write(lightdm, lightdm_config)
+    save(Path("/etc/systemd/system/default.target"))
+    subprocess.run(["systemctl", "set-default", "graphical.target"], check=True)
     print("Installed. Run sudo reboot on the Pi to test the splash and kiosk handoff.")
     print(f"To undo: sudo python3 {REPO / 'scripts/restore-boot-splash.py'} {backup}")
 

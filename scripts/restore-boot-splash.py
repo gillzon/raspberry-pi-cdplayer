@@ -12,7 +12,8 @@ if os.geteuid() != 0 or len(sys.argv) != 2:
 backup = Path(sys.argv[1]).resolve()
 if backup.parent != Path("/var/lib/cdplayer-boot-backups"):
     raise SystemExit("Select a backup under /var/lib/cdplayer-boot-backups.")
-for name, existed in json.loads((backup / "manifest.json").read_text()).items():
+manifest = json.loads((backup / "manifest.json").read_text())
+for name, existed in manifest.items():
     path = Path(name)
     if existed:
         source = backup / path.relative_to("/")
@@ -23,5 +24,7 @@ for name, existed in json.loads((backup / "manifest.json").read_text()).items():
         os.replace(temporary, path)
     else:
         path.unlink(missing_ok=True)
-subprocess.run(["update-initramfs", "-u", "-k", "all"], check=True)
+subprocess.run(["systemctl", "daemon-reload"], check=True)
+if "/etc/initramfs-tools/modules" in manifest:
+    subprocess.run(["update-initramfs", "-u", "-k", "all"], check=True)
 print("Previous configuration restored. Run sudo reboot.")

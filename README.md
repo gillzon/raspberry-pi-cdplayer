@@ -584,6 +584,47 @@ Preview with a 320×240 browser viewport. Keyboard equivalents for testing are
 Left/Right arrows (previous/next), P (pause), and Enter (play); these do not read
 GPIO buttons. Do not guess GPIO pins from the screen size alone.
 
+### Set up automatic login to the player on another Pi
+
+For another **64-bit Raspberry Pi 4 with the same Waveshare LCD V2**, first
+install its LCD driver and the CD player service (see the MPD/service setup
+above). The LCD must appear as `/dev/fb0` with `fb_st7789v` in `/proc/fb`.
+Go and Python 3 must be installed, and the checkout must include the root PNG.
+The Pi can still boot to the console; a working desktop or existing auto-login
+is not required.
+
+From the project folder, run as the normal user who should log in automatically:
+
+```sh
+bash scripts/setup-display.sh --rotate right
+sudo reboot
+```
+
+This installs Chromium, LightDM, Xorg, the framebuffer/input drivers and Openbox;
+creates the SPI Xorg configuration if missing; enables graphical boot; and sets
+LightDM to automatically log in **the user running the script**. It builds and
+installs the updated player using the existing service, then opens the Comreact
+loading page followed by `http://localhost:8080/display` in fullscreen Chromium.
+The browser uses the dedicated profile with the keyring prompt bypassed. All
+paths work for the chosen username; nothing requires a user named `gillzon`.
+
+Omit `--rotate` to preserve existing rotation (or use the driver's default on a
+new configuration). Options are `normal`, `right`, `left`, and `inverted`.
+Existing touch calibration is preserved; a changed orientation may require
+recalibration. The script does not download/install the hardware overlay or
+configure MPD/audio, Wi-Fi, or touchscreen calibration.
+
+For **auto-login plus the early boot logo in one command**, use this instead:
+
+```sh
+bash scripts/setup-boot-splash.sh --rotate right
+sudo reboot
+```
+
+Both installers back up replaced configuration and the previous boot target.
+They do not reboot or restart the desktop automatically. The splash installer
+also requires the automatic initramfs described below.
+
 ### Comreact boot logo and automatic display startup
 
 For the **Raspberry Pi 4 with a working Waveshare 2.8inch RPi LCD (A) V2**, the
@@ -594,12 +635,13 @@ local startup page reveals `/display` only after it renders its first successful
 `/api/status` response. An unavailable app keeps the logo on screen and retries.
 
 Prerequisites: 64-bit Raspberry Pi OS Trixie/Bookworm with the automatic boot image
-at `/boot/firmware/initramfs8`, Chromium, Go, the existing
-`cdplayer.service`, working LightDM desktop auto-login, and the SPI LCD registered
-as `/dev/fb0` (`fb_st7789v`). The existing
-`/etc/X11/xorg.conf.d/98-spi-screen.conf` must select `fbdev` and `/dev/fb0`.
-Get the desktop and touch working first. The installer preserves that Xorg file
-and touch calibration, and reads its `Rotate` option for the early splash.
+at `/boot/firmware/initramfs8`, Go, Python 3, the existing
+`cdplayer.service`, and the SPI LCD registered as `/dev/fb0` (`fb_st7789v`).
+The installer creates `/etc/X11/xorg.conf.d/98-spi-screen.conf` if absent and
+configures desktop auto-login, including on a Pi currently booting to console.
+An existing Xorg file must select `fbdev` and `/dev/fb0`. Its settings and touch
+calibration are preserved unless you explicitly select `--rotate`; the early
+splash uses the resulting Xorg rotation.
 
 Copy/sync the updated checkout **including the root PNG** to the Pi. From that
 checkout, run as the desktop auto-login user (`gillzon`), **without sudo**:
@@ -646,7 +688,7 @@ If the logo stays visible, inspect `journalctl -u cdplayer -b --no-pager` and
 confirm the updated app is running. The startup wrapper intentionally does not
 mistake an HTTP error page or a mere browser window for a ready display.
 
-Every installation prints a dated backup under
+Both display-only and full splash installations print a dated backup under
 `/var/lib/cdplayer-boot-backups/`, covering the replaced files and binary. To
 restore the setup from immediately before that installation, use the exact
 printed backup directory:
@@ -657,7 +699,8 @@ sudo reboot
 ```
 
 Restoration leaves installed packages available and restores the backed-up
-configuration, so later manual edits to those files would also be replaced.
+configuration and previous default boot target, so later manual edits to those
+files would also be replaced.
 Normal `scripts/update.sh` app updates preserve the installed boot configuration;
 rerun `setup-boot-splash.sh` when changing the logo or boot assets.
 

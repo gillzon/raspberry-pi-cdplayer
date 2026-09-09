@@ -1,6 +1,9 @@
 import importlib.util
 from pathlib import Path
 import unittest
+from unittest.mock import patch
+import tempfile
+from types import SimpleNamespace
 
 spec = importlib.util.spec_from_file_location("boot_splash", Path(__file__).with_name("configure-boot-splash.py"))
 boot = importlib.util.module_from_spec(spec)
@@ -8,6 +11,45 @@ spec.loader.exec_module(boot)
 
 
 class BootConfigTest(unittest.TestCase):
+    def test_new_display_config_and_rotation_preserve_existing_settings(self):
+        config = boot.display_config("", "right")
+        self.assertIn('Driver "fbdev"', config)
+        self.assertIn('Option "fbdev" "/dev/fb0"', config)
+        self.assertIn('Option "Rotate" "CW"', config)
+        self.assertEqual(config, boot.display_config(config))
+        self.assertEqual(config, boot.display_config(config, "right"))
+        left = boot.display_config(config, "left")
+        self.assertIn('Option "Rotate" "CCW"', left)
+        self.assertNotIn('"CW"', left)
+        self.assertNotIn('"Rotate"', boot.display_config(left, "normal"))
+
+    def test_does_not_rewrite_unknown_display_configuration(self):
+        with self.assertRaises(ValueError):
+            boot.display_config('Section "Device"\nDriver "modesetting"\nEndSection\n')
+        with self.assertRaises(ValueError):
+            boot.display_config(boot.display_config("") + 'Section "Screen"\nEndSection\n', "right")
+
+    def test_display_setup_preflight_accepts_console_pi_without_lightdm_or_initramfs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name, content in {
+                "proc/device-tree/model": "Raspberry Pi 4 Model B Rev 1.2",
+                "sys/class/graphics/fb0/name": "fb_st7789v\n",
+            }.items():
+                target = root / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(content)
+            def mapped_path(name):
+                path = Path(name)
+                return root / str(path).lstrip('/') if path.is_absolute() else path
+            with patch.object(boot, 'Path', side_effect=mapped_path), \
+                 patch.object(boot.os, 'uname', return_value=SimpleNamespace(machine='aarch64')), \
+                 patch.object(boot.pwd, 'getpwnam', return_value=SimpleNamespace(pw_uid=1000)), \
+                 patch.object(boot.subprocess, 'run') as run:
+                config = boot.preflight('newpiuser', display_only=True, rotation='right')
+                self.assertIn('Option "Rotate" "CW"', config)
+                run.assert_called_once_with(['systemctl', 'cat', 'cdplayer.service'], check=True, stdout=boot.subprocess.DEVNULL)
+
     def test_preserves_root_console_and_hardware_arguments(self):
         original = "console=serial0,115200 console=tty1 root=PARTUUID=abcd-02 rootwait rw fbcon=map:0 loglevel=7 quiet splash\n"
         result = boot.boot_cmdline(original)
