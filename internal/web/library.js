@@ -26,8 +26,10 @@
     scan=counting?'Counting MP3 files… '+(status.total||0)+' found · ':status.phase==='finalizing'?'Finishing scan… · ':'Scanning USB music: '+(status.percent||0)+'% · '+(status.processed||0)+' / '+(status.total||0)+' files checked · ';
     scan+=(status.count||0)+' songs saved · ';
    }else if(status.phase==='complete')scan='Scan complete · 100% · ';
+   else if(status.phase==='cached')scan='Using saved library · ';
+   else if(status.phase==='paused')scan='Scan paused · '+(status.count||0)+' songs saved · Refresh library to continue · ';
    get('libraryStatus').textContent=(status.error?status.error+' · Saved songs are retained. · ':'')+
-    scan+result.total+' songs'+
+    scan+result.total+(get('musicSearch').value.trim()?' matching songs':' songs')+
     (result.total?' · '+(offset+1)+'–'+(offset+tracks.length):get('musicSearch').value.trim()?' · No matching songs':status.scanning?'':' · Mount your USB drive and press Refresh library')+
     (status.warnings?' · Some files have unreadable audio headers; available tags and filenames are shown.':'');
    get('musicPage').textContent='Page '+(Math.floor(offset/pageSize)+1)+' of '+Math.max(1,Math.ceil(result.total/pageSize));

@@ -46,6 +46,73 @@ func TestStreamingScanPublishesFinalProgress(t *testing.T) {
 	}
 }
 
+func TestRunUsesSavedLibraryUntilExplicitRefresh(t *testing.T) {
+	if err := exec.Command("python3", "-c", "import mutagen, sqlite3").Run(); err != nil {
+		t.Skip("requires python3 and Mutagen")
+	}
+	root := t.TempDir()
+	database := filepath.Join(t.TempDir(), "library.sqlite")
+	if err := os.WriteFile(filepath.Join(root, "one.mp3"), []byte("music"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	start := func() (*Library, func()) {
+		l, err := New(root, database)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() { defer close(done); l.Run(ctx) }()
+		stop := func() {
+			cancel()
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Error("library did not stop")
+			}
+		}
+		t.Cleanup(stop)
+		return l, stop
+	}
+	wait := func(l *Library, phase string, count int) {
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			s := l.Snapshot()
+			if !s.Scanning && s.Phase == phase && s.Count == count {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		t.Fatalf("wanted %s/%d, got %+v", phase, count, l.Snapshot())
+	}
+	first, stop := start()
+	wait(first, "complete", 1) // The first empty database still scans automatically.
+	stop()
+	// A reboot with the USB disk unavailable must still load the cached library.
+	if err := os.Rename(root, root+"-offline"); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Rename(root+"-offline", root)
+	rebooted, _ := start()
+	wait(rebooted, "cached", 1)
+	result, err := rebooted.Search(context.Background(), "", 0)
+	if err != nil || result.Total != 1 {
+		t.Fatalf("cached search: %+v %v", result, err)
+	}
+	if err := os.Rename(root+"-offline", root); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "two.mp3"), []byte("music"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	result, err = rebooted.Search(context.Background(), "", 0)
+	if err != nil || result.Total != 1 {
+		t.Fatalf("unexpected automatic refresh: %+v %v", result, err)
+	}
+	rebooted.Refresh()
+	wait(rebooted, "complete", 2)
+}
+
 func TestOpenRejectsEscapesAndRemovedFiles(t *testing.T) {
 	root := t.TempDir()
 	l := &Library{Root: root}

@@ -140,7 +140,34 @@ func (l *Library) Refresh() {
 	}
 }
 func (l *Library) Run(ctx context.Context) {
+	// The saved index is sufficient for browsing/playback. Only a first scan of
+	// an empty, unfinished library starts automatically; populated indexes wait
+	// for Refresh, including when their previous scan was interrupted.
+	var initial struct {
+		Status
+		ScanRequired bool `json:"scan_required"`
+	}
+	data, err := l.run(ctx, "startup")
+	if err == nil {
+		err = json.Unmarshal(data, &initial)
+	}
+	l.mu.Lock()
+	if err != nil {
+		l.status.Error = err.Error()
+	} else {
+		l.status = initial.Status
+	}
+	l.mu.Unlock()
+	scanNow := err == nil && initial.ScanRequired
 	for {
+		if !scanNow {
+			select {
+			case <-ctx.Done():
+				return
+			case <-l.wake:
+			}
+		}
+		scanNow = false
 		if ctx.Err() != nil {
 			return
 		}
@@ -161,17 +188,6 @@ func (l *Library) Run(ctx context.Context) {
 			l.status.Updated = time.Now()
 		}
 		l.mu.Unlock()
-		// Start the interval after completion; a long scan must not immediately
-		// trigger another scan because a ticker has been pending for hours.
-		timer := time.NewTimer(time.Minute)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return
-		case <-timer.C:
-		case <-l.wake:
-		}
-		timer.Stop()
 	}
 }
 func (l *Library) Search(ctx context.Context, query string, offset int) (Results, error) {

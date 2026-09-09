@@ -1,5 +1,6 @@
 """Embedded USB index helper: Python's SQLite plus Mutagen, no writes to USB."""
 import hashlib
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -29,8 +30,23 @@ def connect(path):
             album TEXT, track INTEGER, duration REAL, cover TEXT, search TEXT,
             stamp TEXT);
         CREATE TABLE IF NOT EXISTS artwork (id TEXT PRIMARY KEY, data BLOB);
+        CREATE TABLE IF NOT EXISTS scan_state (id INTEGER PRIMARY KEY CHECK (id = 1), data TEXT NOT NULL);
     ''')
     return db
+
+
+def startup(db):
+    """Read only the Pi's saved database; do not walk or stat the USB disk."""
+    count = db.execute('SELECT count(*) FROM tracks').fetchone()[0]
+    row = db.execute('SELECT data FROM scan_state WHERE id = 1').fetchone()
+    state = json.loads(row['data']) if row else {}
+    complete = state.get('phase') == 'complete'
+    # Older indexes have no scan marker. Reuse them too instead of forcing a
+    # potentially hours-long migration scan; Refresh remains available.
+    state.update(count=count, scanning=False, enabled=True,
+                 phase='cached' if complete or (count and not row) else 'paused' if count else 'idle',
+                 scan_required=not count and not complete)
+    return state
 
 
 def image(data):
@@ -106,11 +122,17 @@ def scan(db, root, report=None):
     total = processed = warnings = checkpointed = 0
     last_save = last_report = time.monotonic()
 
-    def progress(phase):
+    def progress(phase, persist=False):
+        state = {'phase': phase, 'count': count, 'warnings': warnings,
+                 'total': total, 'processed': processed, 'checkpointed': checkpointed,
+                 'percent': 100 if phase == 'complete' else min(99, processed * 100 // total) if total else 0}
+        if phase == 'complete':
+            state['updated'] = datetime.now(timezone.utc).isoformat()
+        if persist:
+            db.execute('INSERT OR REPLACE INTO scan_state VALUES (1, ?)', (json.dumps(state),))
+            db.commit()  # Track/artwork batch and its progress marker commit together.
         if report:
-            report({'phase': phase, 'count': count, 'warnings': warnings,
-                    'total': total, 'processed': processed, 'checkpointed': checkpointed,
-                    'percent': 100 if phase == 'complete' else min(99, processed * 100 // total) if total else 0})
+            report(state)
 
     def walk_error(error):
         raise error  # Never prune after an unreadable/incomplete directory walk.
@@ -119,7 +141,7 @@ def scan(db, root, report=None):
     # spill to disk, rather than retaining a whole large library in Python RAM.
     db.execute('DROP TABLE IF EXISTS temp.scan_files')
     db.execute('CREATE TEMP TABLE scan_files (path TEXT PRIMARY KEY)')
-    progress('discovering')
+    progress('discovering', persist=True)
     with db:
         for directory, dirs, files in os.walk(root, onerror=walk_error, followlinks=False):
             dirs[:] = sorted(d for d in dirs if not (Path(directory) / d).is_symlink())
@@ -150,21 +172,19 @@ def scan(db, root, report=None):
             # Commit before publishing progress: these tracks and their artwork
             # are searchable now and survive restart. Only this batch rolls back.
             if processed - checkpointed >= CHECKPOINT_FILES or time.monotonic() - last_save >= CHECKPOINT_SECONDS:
-                db.commit()
                 checkpointed = processed
                 last_save = time.monotonic()
-                progress('indexing')
-        db.commit()
+                progress('indexing', persist=True)
         checkpointed = processed
-        progress('finalizing')
+        progress('finalizing', persist=True)
         current = root.stat()
         if (current.st_dev, current.st_ino) != (identity.st_dev, identity.st_ino):
             raise OSError('USB music location changed during scan; keeping saved songs')
         # Cleanup is one final atomic transaction, only after a successful scan.
         db.execute('DELETE FROM tracks WHERE path NOT IN (SELECT path FROM scan_files)')
         db.execute('DELETE FROM artwork WHERE id NOT IN (SELECT cover FROM tracks)')
-    count = total
-    progress('complete')
+        count = total
+        progress('complete', persist=True)
     return {'count': count, 'warnings': warnings, 'phase': 'complete', 'total': total,
             'processed': processed, 'checkpointed': checkpointed, 'percent': 100}
 
@@ -181,7 +201,9 @@ def public(row):
 def main():
     command, database, root, *args = sys.argv[1:]
     db = connect(database)
-    if command == 'scan-progress':
+    if command == 'startup':
+        result = startup(db)
+    elif command == 'scan-progress':
         scan(db, root, lambda value: print(json.dumps(value), flush=True))
         return
     elif command == 'scan':

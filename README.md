@@ -41,7 +41,8 @@ reads time on the shared drive. Physical removal detection can consequently
 take the waiting interval plus the next probe's duration. Fast probes retain
 the normal polling interval; the web eject request can bypass the timer wait.
 
-Physical GPIO buttons remain a later milestone. Audio caching is temporary,
+The Waveshare Rev2.1 brightness button is optional (see display setup below);
+physical GPIO playback buttons remain a later milestone. Audio caching is temporary,
 not a permanent ripped music library.
 
 ## Browser interface
@@ -584,6 +585,51 @@ Preview with a 320×240 browser viewport. Keyboard equivalents for testing are
 Left/Right arrows (previous/next), P (pause), and Enter (play); these do not read
 GPIO buttons. Do not guess GPIO pins from the screen size alone.
 
+### Physical brightness button (Waveshare Rev2.1)
+
+On the **2.8inch RPi LCD (A) marked Rev2.1**, **KEY4** can cycle brightness:
+**20% → 40% → 60% → 80% → 100% → 20%**. The first start uses 60%; subsequent
+starts restore the last selected level. Holding a button does not repeat, and
+switch bounce is filtered. The lowest setting stays visible rather than turning
+the panel off. Percentages are PWM duty levels, not measured luminance.
+
+Check **Rev2.1 on the back of the LCD** before installing. Waveshare documents
+PWM brightness only on that revision; older boards use different wiring.
+On your Pi 4, from the updated checkout, run as the normal user:
+
+```sh
+bash scripts/setup-brightness-button.sh --rev2.1
+```
+
+No reboot is needed. The separate `cdplayer-backlight.service` starts at boot and
+works independently of the browser, player and USB scan. It saves the selected
+level to `/var/lib/cdplayer-backlight/brightness`. The display/splash installers
+do not enable this hardware-specific feature automatically.
+
+For Rev2.1, KEY4 connects to **BCM GPIO25 (header pin 22)**, and the backlight
+control connects to **BCM GPIO18 (header pin 12)**. The other three buttons are
+left available. The service uses GPIO Zero with the lgpio backend, software PWM
+at 1 kHz, and an input pull-up. It does not change the display overlay, X11
+rotation, touch calibration, or hardware PWM clock configuration. If a kernel
+driver or another program owns a required GPIO line, the service reports an
+error instead of taking over that line. Actual dimming and button operation
+must be checked on the physical Rev2.1 panel, including during music playback.
+
+```sh
+systemctl status cdplayer-backlight --no-pager
+journalctl -u cdplayer-backlight -n 30 --no-pager
+```
+
+To disable automatic brightness control:
+
+```sh
+sudo systemctl disable --now cdplayer-backlight
+```
+
+Sources: [Waveshare PWM instructions](https://www.waveshare.com/wiki/2.8inch_RPi_LCD_%28A%29#PWM_Backlight_Adjustment_Function),
+[Waveshare Rev2.1 pin table](https://www.waveshare.net/wiki/2.8inch_RPi_LCD_%28A%29),
+and [GPIO Zero's lgpio backend](https://gpiozero.readthedocs.io/en/stable/_modules/gpiozero/pins/lgpio.html).
+
 ### Set up automatic login to the player on another Pi
 
 For another **64-bit Raspberry Pi 4 with the same Waveshare LCD V2**, first
@@ -908,9 +954,14 @@ run, use `-music-dir=/your/mounted/music`; `-music-dir=` disables the USB librar
 Choose a mount outside `/home`, because the supplied service protects home
 directories. USB playback requires MPD on this Pi and a writable `-cache-dir`.
 
-The library scans at startup, one minute after the previous scan finishes, and
-when you press **Refresh library**. Large scans have no ten-minute cutoff; they
-run until complete or until the service stops.
+At startup the player loads the saved SQLite library on the Pi, without walking
+or checking the USB disk. A completed scan is reused across reboots, including
+an empty library; existing indexes from older versions are reused too. There is
+no periodic full-disk scan. **Refresh library** scans for added, changed or removed
+files whenever you choose. The first scan starts automatically only if there are
+no saved songs and no record of a completed scan. If that attempt fails (for
+example, the disk is not mounted yet), mount the disk and press Refresh library.
+Large scans have no ten-minute cutoff; they run until complete or the service stops.
 The index lives at `<cache-dir>/library.sqlite` (normally
 `/var/cache/cdplayer/library.sqlite` under the supplied services). Scans update
 changed files, remove missing entries after a successful scan, and skip symlinks.
@@ -919,9 +970,11 @@ of **100 files or five seconds**, whichever comes first (checked after each file
 SQLite uses WAL with `synchronous=FULL` so completed commits are synced to storage.
 Songs from saved batches are searchable and playable before the whole scan ends.
 
-After a power loss or restart, the scanner recounts the file paths and compares
-file timestamps, sizes and folder artwork with the saved index. Unchanged saved
-songs skip MP3 tag parsing. It resumes the saved indexing work rather than
+After a power loss or restart during a scan, any saved songs are usable immediately.
+The browser shows **Scan paused**; press **Refresh library** to continue when
+convenient. Resuming recounts the file paths and compares file timestamps, sizes
+and folder artwork with the saved index. Unchanged saved songs skip MP3 tag
+parsing. It resumes the saved indexing work rather than
 re-reading every song; it does **not** persist the directory-walk position, so
 counting and checking the file list repeats. Only the unfinished batch needs to
 be redone. As with any filesystem, durability depends on the storage device
@@ -933,6 +986,11 @@ percentage, checked/total files and saved songs. The percentage measures files
 checked, not bytes or estimated time remaining; it reaches 100% only after final
 cleanup succeeds. A temporary SQLite path list avoids keeping the entire file
 list in Python memory. Search filters do not change the scan's total.
+When not scanning, **Using saved library** confirms that the index was loaded
+from disk. A filtered search shows “matching songs” to distinguish its results
+from the total saved library. Keep the same music mount path and persistent cache
+directory across reboots. The USB disk must be mounted to play songs; browsing
+the saved list alone does not establish that the disk is connected.
 
 An unavailable directory or failed scan shows an error, retains existing songs
 and completed batches, and does not prune missing entries. An empty mounted

@@ -1,0 +1,22 @@
+[Unit]
+Description=CD player LCD brightness button (Waveshare Rev2.1)
+After=systemd-udev-trigger.service
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/lib/cdplayer/brightness-button.py --rev2.1
+Restart=on-failure
+RestartSec=5
+StateDirectory=cdplayer-backlight
+WorkingDirectory=/var/lib/cdplayer-backlight
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+DevicePolicy=closed
+DeviceAllow=/dev/gpiochip0 rw
+
+[Install]
+WantedBy=multi-user.target

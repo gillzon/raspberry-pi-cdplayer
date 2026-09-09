@@ -146,6 +146,10 @@ index.scan(index.connect(sys.argv[2]), sys.argv[3])
 '''
         result = subprocess.run([sys.executable, '-c', program, index.__file__, str(self.dbpath), str(self.root)])
         self.assertEqual(result.returncode, 73)
+        saved = index.startup(self.db)
+        self.assertEqual(saved['phase'], 'paused')
+        self.assertFalse(saved['scan_required'])
+        self.assertEqual(saved['checkpointed'], 2)
         with index.connect(self.dbpath) as reader:
             self.assertEqual({r['path'] for r in reader.execute('SELECT path FROM tracks')}, {'a.mp3', 'b.mp3', 'z-old.mp3'})
             self.assertEqual(reader.execute('PRAGMA integrity_check').fetchone()[0], 'ok')
@@ -197,8 +201,26 @@ index.scan(index.connect(sys.argv[2]), sys.argv[3])
         self.assertTrue(any(r['phase'] == 'indexing' and r['checkpointed'] == 1 for r in reports))
 
     def test_empty_scan_completes_without_dividing_by_zero(self):
+        self.assertTrue(index.startup(self.db)['scan_required'])
         result = index.scan(self.db, self.root)
         self.assertEqual((result['count'], result['total'], result['percent']), (0, 0, 100))
+        self.assertFalse(index.startup(self.db)['scan_required'])
+
+    def test_saved_library_startup_does_not_access_usb_and_legacy_index_is_reused(self):
+        self.song('one.mp3')
+        index.scan(self.db, self.root)
+        self.root.rename(self.root.with_name('unmounted'))
+        with patch.object(index.os, 'walk', side_effect=AssertionError('startup walked USB')):
+            state = json.loads(self.command('startup'))
+        self.assertEqual((state['phase'], state['count'], state['percent']), ('cached', 1, 100))
+        self.assertFalse(state['scan_required'])
+        self.assertIn('updated', state)
+        # An index from before completion markers existed also boots instantly.
+        with self.db:
+            self.db.execute('DELETE FROM scan_state')
+        legacy = index.startup(self.db)
+        self.assertEqual(legacy['phase'], 'cached')
+        self.assertFalse(legacy['scan_required'])
 
 
 if __name__ == '__main__':

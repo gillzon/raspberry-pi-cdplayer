@@ -48,6 +48,13 @@ test('USB browser searches one field, renders safe text, pages and selects by ID
  result={...result,status:{scanning:false,phase:'complete',percent:100}};
  await get('refreshLibrary').onclick();
  assert.match(get('libraryStatus').textContent,/Scan complete · 100%/);
+ result={...result,total:0,tracks:[],status:{phase:'cached',count:27362}};
+ await get('refreshLibrary').onclick();
+ assert.match(get('libraryStatus').textContent,/Using saved library · 0 matching songs/);
+ assert.equal(get('libraryScanProgress').hidden,true);
+ result={...result,status:{phase:'paused',count:5794}};
+ await get('refreshLibrary').onclick();
+ assert.match(get('libraryStatus').textContent,/Scan paused · 5794 songs saved · Refresh library to continue/);
 });
 
 test('USB now-playing and next use MPD even with no CD inserted',async()=>{
