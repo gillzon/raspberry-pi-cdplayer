@@ -17,9 +17,18 @@
    if(revision!==sequence)return;
    const status=result.status||{},tracks=result.tracks||[];
    if(offset&&offset>=result.total){offset=0;clearTimeout(timeout);return search()}
-   get('libraryStatus').textContent=status.error||
-    (status.scanning?'Scanning USB music… · ':'')+result.total+' songs'+
-    (result.total?' · '+(offset+1)+'–'+(offset+tracks.length):get('musicSearch').value.trim()?' · No matching songs':' · Mount your USB drive and press Refresh library')+
+   const meter=get('libraryScanProgress');
+   meter.hidden=!status.scanning;
+   const counting=status.phase==='discovering';
+   if(counting)meter.removeAttribute('value');else meter.value=status.percent||0;
+   let scan='';
+   if(status.scanning){
+    scan=counting?'Counting MP3 files… '+(status.total||0)+' found · ':status.phase==='finalizing'?'Finishing scan… · ':'Scanning USB music: '+(status.percent||0)+'% · '+(status.processed||0)+' / '+(status.total||0)+' files checked · ';
+    scan+=(status.count||0)+' songs saved · ';
+   }else if(status.phase==='complete')scan='Scan complete · 100% · ';
+   get('libraryStatus').textContent=(status.error?status.error+' · Saved songs are retained. · ':'')+
+    scan+result.total+' songs'+
+    (result.total?' · '+(offset+1)+'–'+(offset+tracks.length):get('musicSearch').value.trim()?' · No matching songs':status.scanning?'':' · Mount your USB drive and press Refresh library')+
     (status.warnings?' · Some files have unreadable audio headers; available tags and filenames are shown.':'');
    get('musicPage').textContent='Page '+(Math.floor(offset/pageSize)+1)+' of '+Math.max(1,Math.ceil(result.total/pageSize));
    const key=JSON.stringify(tracks);

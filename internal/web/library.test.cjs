@@ -32,6 +32,22 @@ test('USB browser searches one field, renders safe text, pages and selects by ID
  assert.equal(get('mixAll').disabled,false);
  await get('refreshLibrary').onclick();
  assert.ok(calls.some(([url,options])=>url==='/api/library/refresh'&&options.method==='POST'));
+ result={...result,status:{scanning:true,phase:'discovering',total:1200,count:500}};
+ await get('refreshLibrary').onclick();
+ assert.match(get('libraryStatus').textContent,/Counting MP3 files… 1200 found/);
+ assert.equal(get('libraryScanProgress').hidden,false);
+ result={...result,status:{scanning:true,phase:'indexing',percent:42,processed:420,total:1000,count:600}};
+ await get('refreshLibrary').onclick();
+ assert.equal(get('libraryScanProgress').value,42);
+ assert.match(get('libraryStatus').textContent,/42% · 420 \/ 1000 files checked · 600 songs saved/);
+ result={...result,status:{scanning:false,phase:'interrupted',error:'Drive disconnected'}};
+ await get('refreshLibrary').onclick();
+ assert.equal(get('libraryScanProgress').hidden,true);
+ assert.match(get('libraryStatus').textContent,/Drive disconnected · Saved songs are retained/);
+ assert.equal(get('musicResults').children.length,1);
+ result={...result,status:{scanning:false,phase:'complete',percent:100}};
+ await get('refreshLibrary').onclick();
+ assert.match(get('libraryStatus').textContent,/Scan complete · 100%/);
 });
 
 test('USB now-playing and next use MPD even with no CD inserted',async()=>{

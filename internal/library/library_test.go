@@ -9,7 +9,42 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestStreamingScanPublishesFinalProgress(t *testing.T) {
+	if err := exec.Command("python3", "-c", "import mutagen, sqlite3").Run(); err != nil {
+		t.Skip("requires python3 and Mutagen")
+	}
+	root := t.TempDir()
+	l, err := New(root, filepath.Join(t.TempDir(), "library.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"one.mp3", "two.mp3"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("music"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := l.runScan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	status := l.Snapshot()
+	if status.Phase != "complete" || status.Count != 2 || status.Processed != 2 || status.Total != 2 || status.Percent != 100 || status.Checkpointed != 2 {
+		t.Fatalf("bad progress: %+v", status)
+	}
+	result, err := l.Search(ctx, "", 0)
+	if err != nil || result.Total != 2 || result.Status.Percent != 100 {
+		t.Fatalf("search: %+v %v", result, err)
+	}
+	canceled, stop := context.WithCancel(ctx)
+	stop()
+	if err := l.runScan(canceled); err == nil {
+		t.Fatal("canceled scan succeeded")
+	}
+}
 
 func TestOpenRejectsEscapesAndRemovedFiles(t *testing.T) {
 	root := t.TempDir()

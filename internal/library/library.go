@@ -2,6 +2,7 @@
 package library
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	_ "embed"
@@ -31,12 +32,17 @@ type Track struct {
 }
 
 type Status struct {
-	Enabled  bool      `json:"enabled"`
-	Scanning bool      `json:"scanning"`
-	Count    int       `json:"count"`
-	Warnings int       `json:"warnings"`
-	Error    string    `json:"error"`
-	Updated  time.Time `json:"updated"`
+	Enabled      bool      `json:"enabled"`
+	Scanning     bool      `json:"scanning"`
+	Count        int       `json:"count"`
+	Warnings     int       `json:"warnings"`
+	Error        string    `json:"error"`
+	Updated      time.Time `json:"updated"`
+	Phase        string    `json:"phase"`
+	Total        int       `json:"total"`
+	Processed    int       `json:"processed"`
+	Checkpointed int       `json:"checkpointed"`
+	Percent      int       `json:"percent"`
 }
 
 type Results struct {
@@ -63,8 +69,11 @@ func New(root, database string) (*Library, error) {
 }
 
 func (l *Library) run(ctx context.Context, action string, args ...string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
-	defer cancel()
+	if action != "scan" {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 10*time.Minute)
+		defer cancel()
+	}
 	command := exec.CommandContext(ctx, "python3", append([]string{"-c", helper, action, l.Database, l.Root}, args...)...)
 	var stderr bytes.Buffer
 	command.Stderr = &stderr
@@ -76,6 +85,54 @@ func (l *Library) run(ctx context.Context, action string, args ...string) ([]byt
 }
 
 func (l *Library) Snapshot() Status { l.mu.RLock(); defer l.mu.RUnlock(); return l.status }
+
+// A large disk can take hours. Stream committed progress, bounded by the service
+// context rather than the short timeout used for ordinary library requests.
+func (l *Library) runScan(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	command := exec.CommandContext(ctx, "python3", "-c", helper, "scan-progress", l.Database, l.Root)
+	var stderr bytes.Buffer
+	command.Stderr = &stderr
+	stdout, err := command.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	if err = command.Start(); err != nil {
+		return err
+	}
+	scanner := bufio.NewScanner(stdout)
+	var progress Status
+	var decodeErr error
+	for scanner.Scan() {
+		if decodeErr = json.Unmarshal(scanner.Bytes(), &progress); decodeErr != nil {
+			cancel()
+			break
+		}
+		l.mu.Lock()
+		progress.Enabled, progress.Scanning = true, true
+		progress.Updated = l.status.Updated
+		l.status = progress
+		l.mu.Unlock()
+	}
+	if scanner.Err() != nil {
+		cancel()
+	}
+	waitErr := command.Wait()
+	if decodeErr != nil {
+		return fmt.Errorf("USB scan progress: %w", decodeErr)
+	}
+	if scanner.Err() != nil {
+		return fmt.Errorf("USB scan progress: %w", scanner.Err())
+	}
+	if waitErr != nil {
+		return fmt.Errorf("USB library: %s (%w)", strings.TrimSpace(stderr.String()), waitErr)
+	}
+	if progress.Phase != "complete" {
+		return fmt.Errorf("USB scan exited without completing; saved batches retained")
+	}
+	return nil
+}
 func (l *Library) Refresh() {
 	select {
 	case l.wake <- struct{}{}:
@@ -83,33 +140,38 @@ func (l *Library) Refresh() {
 	}
 }
 func (l *Library) Run(ctx context.Context) {
-	ticker := time.NewTicker(time.Minute)
-	defer ticker.Stop()
 	for {
+		if ctx.Err() != nil {
+			return
+		}
 		l.mu.Lock()
 		l.status.Scanning = true
+		l.status.Phase = "discovering"
+		l.status.Total, l.status.Processed, l.status.Checkpointed, l.status.Percent = 0, 0, 0, 0
+		l.status.Error = ""
 		l.mu.Unlock()
-		data, err := l.run(ctx, "scan")
-		var result Status
-		if err == nil {
-			err = json.Unmarshal(data, &result)
-		}
+		err := l.runScan(ctx)
 		l.mu.Lock()
 		l.status.Scanning = false
 		if err != nil {
 			l.status.Error = err.Error()
+			l.status.Phase = "interrupted"
 		} else {
-			l.status.Count, l.status.Warnings = result.Count, result.Warnings
 			l.status.Error = ""
 			l.status.Updated = time.Now()
 		}
 		l.mu.Unlock()
+		// Start the interval after completion; a long scan must not immediately
+		// trigger another scan because a ticker has been pending for hours.
+		timer := time.NewTimer(time.Minute)
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return
-		case <-ticker.C:
+		case <-timer.C:
 		case <-l.wake:
 		}
+		timer.Stop()
 	}
 }
 func (l *Library) Search(ctx context.Context, query string, offset int) (Results, error) {

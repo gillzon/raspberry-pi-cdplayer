@@ -908,14 +908,37 @@ run, use `-music-dir=/your/mounted/music`; `-music-dir=` disables the USB librar
 Choose a mount outside `/home`, because the supplied service protects home
 directories. USB playback requires MPD on this Pi and a writable `-cache-dir`.
 
-The library scans at startup, every minute, and when you press **Refresh library**.
+The library scans at startup, one minute after the previous scan finishes, and
+when you press **Refresh library**. Large scans have no ten-minute cutoff; they
+run until complete or until the service stops.
 The index lives at `<cache-dir>/library.sqlite` (normally
 `/var/cache/cdplayer/library.sqlite` under the supplied services). Scans update
 changed files, remove missing entries after a successful scan, and skip symlinks.
-The USB filesystem is never modified. An unavailable directory or failed scan
-shows an error and retains the previous index; an empty mounted directory clears
-its entries. A removed song cannot be played even if an old search result remains
-visible. Scanning and searching run separately from the playback loop.
+The USB filesystem is never modified. Scans save metadata and artwork in batches
+of **100 files or five seconds**, whichever comes first (checked after each file).
+SQLite uses WAL with `synchronous=FULL` so completed commits are synced to storage.
+Songs from saved batches are searchable and playable before the whole scan ends.
+
+After a power loss or restart, the scanner recounts the file paths and compares
+file timestamps, sizes and folder artwork with the saved index. Unchanged saved
+songs skip MP3 tag parsing. It resumes the saved indexing work rather than
+re-reading every song; it does **not** persist the directory-walk position, so
+counting and checking the file list repeats. Only the unfinished batch needs to
+be redone. As with any filesystem, durability depends on the storage device
+honoring flushes; this does not protect against a damaged SD card or USB disk.
+
+Under **Pick song · USB Music**, progress first shows **Counting MP3 files…** and
+the number found, with an indeterminate bar. Once the count is known it shows a
+percentage, checked/total files and saved songs. The percentage measures files
+checked, not bytes or estimated time remaining; it reaches 100% only after final
+cleanup succeeds. A temporary SQLite path list avoids keeping the entire file
+list in Python memory. Search filters do not change the scan's total.
+
+An unavailable directory or failed scan shows an error, retains existing songs
+and completed batches, and does not prune missing entries. An empty mounted
+directory clears its entries after a successful scan. A removed song cannot be
+played even if an old search result remains visible. Scanning and searching run
+separately from the playback loop.
 
 Selecting USB music disconnects Spotify and suspends CD autoplay. Inserting a CD,
 stopping USB playback, or unplugging the drive does not start the CD. Choose

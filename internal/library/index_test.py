@@ -118,6 +118,88 @@ class LibraryTests(unittest.TestCase):
         with patch('mutagen.mp3.MP3', side_effect=AssertionError('unchanged file reread')):
             index.scan(self.db, self.root)
 
+    def test_crash_retains_batches_and_art_then_resumes_without_rereading_tags(self):
+        stale = self.song('z-old.mp3')
+        index.scan(self.db, self.root)
+        stale.unlink()
+        for name in ('a.mp3', 'b.mp3', 'c.mp3'):
+            self.song(name, art=PNG)
+        # Exit without closing SQLite after writing the third track. The first
+        # two were committed; the third is an unfinished transaction in the WAL.
+        program = '''
+import importlib.util, os, sys
+spec = importlib.util.spec_from_file_location('index', sys.argv[1])
+index = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(index)
+index.CHECKPOINT_FILES = 2
+original = index.index_track
+calls = 0
+def interrupted(*args):
+    global calls
+    result = original(*args)
+    calls += 1
+    if calls == 3:
+        os._exit(73)
+    return result
+index.index_track = interrupted
+index.scan(index.connect(sys.argv[2]), sys.argv[3])
+'''
+        result = subprocess.run([sys.executable, '-c', program, index.__file__, str(self.dbpath), str(self.root)])
+        self.assertEqual(result.returncode, 73)
+        with index.connect(self.dbpath) as reader:
+            self.assertEqual({r['path'] for r in reader.execute('SELECT path FROM tracks')}, {'a.mp3', 'b.mp3', 'z-old.mp3'})
+            self.assertEqual(reader.execute('PRAGMA integrity_check').fetchone()[0], 'ok')
+        self.assertEqual(json.loads(self.command('search', '', '0'))['total'], 3)
+        rows = list(self.db.execute("SELECT cover FROM tracks WHERE path = 'a.mp3'"))
+        self.assertEqual(self.command('art', rows[0]['cover']), PNG)
+        from mutagen.mp3 import MP3
+        reread = []
+        def read_audio(path):
+            reread.append(path.name)
+            return MP3(path)
+        with patch('mutagen.mp3.MP3', side_effect=read_audio):
+            result = index.scan(self.db, self.root)
+        self.assertEqual(reread, ['c.mp3'])
+        self.assertEqual(result['count'], 3)
+        self.assertEqual({r['path'] for r in self.db.execute('SELECT path FROM tracks')}, {'a.mp3', 'b.mp3', 'c.mp3'})
+
+    def test_progress_reports_committed_searchable_batches_and_unknown_count_phase(self):
+        for name in ('a.mp3', 'b.mp3', 'c.mp3'):
+            self.song(name)
+        reports = []
+        def report(value):
+            reports.append(value)
+            # A separate connection sees exactly what the progress says is saved.
+            with sqlite3.connect(self.dbpath) as reader:
+                self.assertEqual(reader.execute('SELECT count(*) FROM tracks').fetchone()[0], value['count'])
+        with patch.object(index, 'CHECKPOINT_FILES', 2):
+            index.scan(self.db, self.root, report)
+        self.assertEqual(reports[0]['phase'], 'discovering')
+        self.assertEqual(reports[0]['total'], 0)
+        saved = next(r for r in reports if r['checkpointed'] == 2)
+        self.assertEqual((saved['processed'], saved['total'], saved['percent']), (2, 3, 66))
+        self.assertEqual(reports[-2]['phase'], 'finalizing')
+        self.assertLess(reports[-2]['percent'], 100)
+        self.assertEqual((reports[-1]['phase'], reports[-1]['percent']), ('complete', 100))
+
+    def test_slow_files_trigger_time_checkpoint_before_batch_is_full(self):
+        self.song('one.mp3')
+        clock = [0]
+        original = index.index_track
+        def slow_track(*args):
+            result = original(*args)
+            clock[0] += 6
+            return result
+        reports = []
+        with patch.object(index.time, 'monotonic', side_effect=lambda: clock[0]), \
+             patch.object(index, 'index_track', side_effect=slow_track):
+            index.scan(self.db, self.root, reports.append)
+        self.assertTrue(any(r['phase'] == 'indexing' and r['checkpointed'] == 1 for r in reports))
+
+    def test_empty_scan_completes_without_dividing_by_zero(self):
+        result = index.scan(self.db, self.root)
+        self.assertEqual((result['count'], result['total'], result['percent']), (0, 0, 100))
+
 
 if __name__ == '__main__':
     unittest.main()
