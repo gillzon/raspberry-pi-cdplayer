@@ -22,6 +22,7 @@ import (
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/metadata"
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/mpd"
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/player"
+	"github.com/gillzon/raspberry-pi-cdplayer/internal/radio"
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/spotify"
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/systeminfo"
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/web"
@@ -267,12 +268,17 @@ func main() {
 	ticker := time.NewTicker(*poll)
 	defer ticker.Stop()
 	slog.Info("CD player starting", "device", *device, "mpd", *address)
+	selectedStation := radio.Stations()[0]
 	lastError := ""
 	publish := func(err error) {
 		trackRequests.Update(controller.Disc().ID, controller.Disc().Tracks, controller.Source() == "cd")
 		albums.Observe(ctx, controller.Disc())
 		selectedDevice = drive.DevicePath()
 		state := web.State{Outputs: outputs, Source: controller.Source(), Spotify: receiver.State, Device: selectedDevice, Disc: controller.Disc(), MPD: backend.Status(), Updated: time.Now()}
+		if controller.Source() == "radio" {
+			station := selectedStation
+			state.Radio = &station
+		}
 		if controller.Source() == "usb" {
 			state.USBQueueLength = len(usbQueue)
 			state.USBMix = usbMix
@@ -293,7 +299,45 @@ func main() {
 		}
 		website.Set(state)
 	}
+	startRadio := func(ctx context.Context, station radio.Station) error {
+		if err := receiver.Stop(); err != nil {
+			return err
+		}
+		controller.UseRadio()
+		selectedStation = station
+		defer receiver.Tick()
+		if _, err := backend.Connect(ctx); err != nil {
+			return err
+		}
+		return backend.StartURLs([]string{station.URL}, 0)
+	}
 	handleControl := func(request controlRequest) error {
+		if request.command.Action == "source-next" {
+			switch controller.Source() {
+			case "cd", "idle":
+				request.command.Action = "source-usb"
+			case "usb":
+				request.command.Action = "source-radio"
+			case "radio":
+				if receiver.State.Enabled {
+					request.command.Action = "source-spotify"
+				} else {
+					request.command.Action = "source-cd"
+				}
+			default:
+				request.command.Action = "source-cd"
+			}
+		}
+		if request.command.Action == "toggle" {
+			request.command.Action = "play"
+			if backend.Status()["state"] == "play" {
+				request.command.Action = "pause"
+			}
+		}
+		if request.command.Action == "play" && controller.Source() == "usb" && len(usbQueue) == 0 {
+			request.command.Action = "usb-mix"
+		}
+
 		err := request.ctx.Err()
 		position := -1
 		if err == nil && request.command.DiscID != "" && request.command.DiscID != controller.Disc().ID {
@@ -307,6 +351,38 @@ func main() {
 		}
 		if err == nil {
 			switch request.command.Action {
+			case "source-usb":
+				if err = receiver.Stop(); err != nil {
+					break
+				}
+				if _, err = backend.Connect(request.ctx); err != nil {
+					break
+				}
+				if err = backend.Clear(); err != nil {
+					break
+				}
+				controller.UseUSB()
+				usbQueue = nil
+				usbMix = false
+				receiver.Tick()
+			case "source-radio", "radio-play":
+				station := selectedStation
+				if request.command.Action == "radio-play" {
+					var ok bool
+					station, ok = radio.Find(request.command.Station)
+					if !ok {
+						err = fmt.Errorf("unknown radio station")
+						break
+					}
+				}
+				err = startRadio(request.ctx, station)
+			case "source-spotify":
+				if !receiver.State.Enabled {
+					err = fmt.Errorf("Spotify is disabled")
+					break
+				}
+				err = controller.UseSpotify(request.ctx)
+				receiver.Tick()
 			case "outputs":
 				_, err = backend.Connect(request.ctx)
 				if err == nil {
@@ -425,7 +501,7 @@ func main() {
 				receiver.Tick()
 			case "source-cd":
 				err = receiver.Stop()
-				if err == nil && controller.Source() == "usb" {
+				if err == nil && (controller.Source() == "usb" || controller.Source() == "radio") {
 					// Stop USB even when a missing/unreadable CD prevents the next Step.
 					err = backend.Clear()
 				}
@@ -436,7 +512,20 @@ func main() {
 			case "eject":
 				err = controller.Eject()
 			default:
-				if controller.Source() == "usb" {
+				if controller.Source() == "radio" {
+					switch request.command.Action {
+					case "next":
+						err = startRadio(request.ctx, radio.Next(selectedStation.ID, 1))
+					case "previous":
+						err = startRadio(request.ctx, radio.Next(selectedStation.ID, -1))
+					case "play":
+						err = startRadio(request.ctx, selectedStation)
+					case "pause", "stop":
+						err = backend.Control("stop", 0)
+					default:
+						err = fmt.Errorf("unsupported radio control")
+					}
+				} else if controller.Source() == "usb" {
 					if request.command.Action == "track" {
 						err = fmt.Errorf("select a USB song from Pick song")
 					} else {

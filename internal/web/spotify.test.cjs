@@ -12,9 +12,9 @@ test('Spotify metadata renders and disconnect enables manual CD play without a c
  let state={source:'spotify',updated:new Date().toISOString(),device:'/dev/sr0',disc:{ID:'a',Tracks:[]},mpd:{},spotify:{enabled:true,running:true,playback:'playing',now:{title:'A Song',artist:'An Artist',album:'An Album',cover:'https://i.scdn.co/image/example'}}};
  let posts=0;
  const context=vm.createContext({
-  document:{getElementById:get,querySelector:()=>controls[0],querySelectorAll:selector=>selector==='[data-action]'||selector==='[data-action],[data-track]'?controls:[],createElement:element},
+  document:{getElementById:get,querySelector:selector=>controls.find(b=>selector.includes(b.dataset.action))||controls[0],querySelectorAll:selector=>selector==='[data-action]'||selector==='[data-action],[data-track]'?controls:[],createElement:element},
   TrackNavigation:class{update(){}cancel(){}},
-  fetch:async(url,options)=>{if(options?.method==='POST')posts++;return {ok:true,json:async()=>url==='/api/system'?{updated:new Date().toISOString()}:state}},
+  fetch:async(url,options)=>{if(options?.method==='POST')posts++;return {ok:true,json:async()=>url==='/api/radio'?[]:url==='/api/system'?{updated:new Date().toISOString()}:state}},
   AbortSignal,setTimeout:()=>{},Date,
  });
  const html=fs.readFileSync(__dirname+'/index.html','utf8');

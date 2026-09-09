@@ -41,6 +41,11 @@ func TestControls(t *testing.T) {
 		{`{"action":"track","track":12}`, 204, true},
 		{`{"action":"stop"}`, 204, true},
 		{`{"action":"usb-mix"}`, 204, true},
+		{`{"action":"radio-play","station":"p1"}`, 204, true},
+		{`{"action":"radio-play","station":"http://localhost/private"}`, 400, false},
+		{`{"action":"radio-play"}`, 400, false},
+		{`{"action":"source-next"}`, 204, true},
+		{`{"action":"toggle"}`, 204, true},
 		{`{"action":"usb-play","song_id":"` + strings.Repeat("a", 64) + `"}`, 204, true},
 		{`{"action":"usb-play","song_id":"../../etc/passwd"}`, 400, false},
 		{`{"action":"usb-play"}`, 400, false},
@@ -115,5 +120,13 @@ func TestOutputSettingsUseController(t *testing.T) {
 	}
 	if got.Action != "output" || got.Output != "HDMI 1" {
 		t.Fatalf("%+v", got)
+	}
+}
+
+func TestRadioCatalogDoesNotExposeStreamURLs(t *testing.T) {
+	w := httptest.NewRecorder()
+	(&Server{}).Handler().ServeHTTP(w, httptest.NewRequest("GET", "/api/radio", nil))
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "Rockklassiker") || strings.Contains(w.Body.String(), "https://") {
+		t.Fatalf("unexpected catalog: %s", w.Body.String())
 	}
 }

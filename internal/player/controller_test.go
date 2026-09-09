@@ -429,3 +429,42 @@ func TestUSBEjectDoesNotStopMusic(t *testing.T) {
 		t.Fatal("eject interrupted USB")
 	}
 }
+
+func TestRadioSuppressesCDProbeAndAutoplayUntilCDSelected(t *testing.T) {
+	b := &fakeBackend{}
+	d := &fakeDrive{err: errors.New("drive unavailable")}
+	c := &Controller{Backend: b, Drive: d}
+	c.UseRadio()
+	if err := c.Step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if c.Source() != "radio" || len(b.starts) != 0 || b.clears != 0 {
+		t.Fatal("radio was interrupted")
+	}
+	b.healthErr = errors.New("stream disconnected")
+	if err := c.Step(context.Background()); !errors.Is(err, b.healthErr) {
+		t.Fatal("radio playback error hidden")
+	}
+	c.UseUSB()
+	if c.Source() != "usb" {
+		t.Fatal("cannot leave radio for USB")
+	}
+	c.UseRadio()
+	c.UseCD()
+	if err := c.Step(context.Background()); !errors.Is(err, d.err) {
+		t.Fatal("CD probe was not restored")
+	}
+}
+
+func TestRadioEjectKeepsStreamPlaying(t *testing.T) {
+	b := &fakeBackend{}
+	ejected := false
+	c := &Controller{Backend: b, Drive: &ejectDrive{eject: func() error { ejected = true; return nil }}}
+	c.UseRadio()
+	if err := c.Eject(); err != nil {
+		t.Fatal(err)
+	}
+	if !ejected || b.clears != 0 || c.Source() != "radio" {
+		t.Fatal("eject interrupted radio")
+	}
+}

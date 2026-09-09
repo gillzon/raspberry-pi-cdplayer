@@ -28,6 +28,7 @@ type Controller struct {
 	ready          bool
 	observed       disc.Disc
 	ejectedID      string
+	radio          bool
 	usb            bool
 	spotify        bool
 	spotifyStopped bool
@@ -38,7 +39,7 @@ type Controller struct {
 // Step is called immediately at startup and periodically thereafter. Failed
 // reads preserve the current session; failed queue changes are retried.
 func (c *Controller) Step(ctx context.Context) error {
-	if c.usb {
+	if c.usb || c.radio {
 		if _, err := c.Backend.Connect(ctx); err != nil {
 			return err
 		}
@@ -133,7 +134,7 @@ func (c *Controller) Eject() error {
 	if !ok {
 		return fmt.Errorf("drive does not support eject")
 	}
-	if c.usb {
+	if c.usb || c.radio {
 		return drive.Eject()
 	}
 	if c.Release != nil {
@@ -154,6 +155,7 @@ func (c *Controller) Eject() error {
 // UseSpotify suppresses autoplay even if stopping MPD fails. The caller must
 // keep the Spotify sink gated until this returns successfully.
 func (c *Controller) UseSpotify(ctx context.Context) error {
+	c.radio = false
 	c.usb = false
 	c.spotify = true
 	c.spotifyIdle = false
@@ -185,6 +187,7 @@ func (c *Controller) stopForSpotify() error {
 	return nil
 }
 func (c *Controller) UseCD() {
+	c.radio = false
 	c.usb = false
 	c.spotify = false
 	c.spotifyStopped = false
@@ -193,6 +196,7 @@ func (c *Controller) UseCD() {
 
 // UseUSB suspends CD autoplay until the user explicitly selects CD again.
 func (c *Controller) UseUSB() {
+	c.radio = false
 	c.usb = true
 	c.spotify = false
 	c.spotifyStopped = false
@@ -201,7 +205,16 @@ func (c *Controller) UseUSB() {
 		c.Release()
 	}
 }
+func (c *Controller) UseRadio() {
+	c.UseUSB()
+	c.usb = false
+	c.radio = true
+}
+
 func (c *Controller) Source() string {
+	if c.radio {
+		return "radio"
+	}
 	if c.usb {
 		return "usb"
 	}

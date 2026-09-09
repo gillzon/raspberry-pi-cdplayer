@@ -31,7 +31,7 @@ button:focus-visible{outline:2px solid #c9fbd6;outline-offset:-3px}
 .timeline time{max-width:65%;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
 [hidden]{display:none!important}
 </style>
-<header><span id="source">CD player</span><span id="status" role="status">Connecting…</span><time id="clock" aria-label="Current local time"></time></header>
+<header><button id="source" title="Change playback mode" aria-label="Change playback mode">CD player</button><span id="status" role="status">Connecting…</span><time id="clock" aria-label="Current local time"></time></header>
 <main><div class="art"><img id="cover" alt="Album cover" hidden><span id="placeholder">♫</span></div><div class="text"><h1 id="title">Waiting for player</h1><p id="artist"></p><p id="album"></p></div></main>
 <div class="timeline"><progress id="progress" value="0" max="1" aria-label="Song progress"></progress><time id="songTime">0:00 / —</time></div>
 <p id="message" role="status"></p>
@@ -48,35 +48,37 @@ $('cover').onload=()=>{$('cover').hidden=false;$('placeholder').hidden=true};
 $('cover').onerror=()=>{$('cover').hidden=true;$('placeholder').hidden=false};
 function render(s){
  state=s;
- const usb=s.source==='usb',spotify=s.source==='spotify',idle=s.source==='idle',m=s.mpd||{},sp=s.spotify||{},tracks=s.disc?.Tracks||[],meta=s.metadata||{};
+ const radio=s.source==='radio',usb=s.source==='usb',spotify=s.source==='spotify',idle=s.source==='idle',m=s.mpd||{},sp=s.spotify||{},tracks=s.disc?.Tracks||[],meta=s.metadata||{};
  const selecting=s.selection?.pending;
  const position=selecting?tracks.indexOf(s.selection.track):(m.song===undefined?-1:Number(m.song)),track=tracks[position],song=meta.tracks?.[track]||{};
  const stale=(!s.updated||Date.now()-Date.parse(s.updated)>5000)&&!selecting;
- navigation.update(s.disc?.ID,tracks,position);if(stale||spotify||idle||usb)navigation.cancel();
- $('source').textContent=usb?'USB Music':spotify?'Spotify':idle?'CD · ready':'CD';
+ navigation.update(s.disc?.ID,tracks,position);if(stale||spotify||idle||usb||radio)navigation.cancel();
+ $('source').textContent=radio?'Radio ▾':usb?'USB Music':spotify?'Spotify':idle?'CD · ready':'CD';
  $('status').textContent=selecting?'Changing track…':busy?'Please wait…':stale?'Status delayed':idle?'Stopped':spotify?({playing:'Playing',paused:'Paused',loading:'Loading',connected:'Connected',stopped:'Stopped'}[sp.playback]||'Connected'):({play:'Playing',pause:'Paused',stop:'Stopped'}[m.state]||'Waiting');
- $('title').textContent=usb?(s.usb?.title||'Pick a song in the web UI'):spotify?(sp.now?.title||'Spotify Connect'):idle?'Press Play for CD':song.title||(track?'Track '+track:tracks.length?'Audio CD':'Insert a CD');
- $('artist').textContent=usb?(s.usb?.artist||''):spotify?(sp.now?.artist||''):(song.artist||meta.artist||'');
- $('album').textContent=usb?(s.usb?.album||''):spotify?(sp.now?.album||''):(meta.album||'');
+ $('title').textContent=radio?(s.radio?.name||'Internet Radio'):usb?(s.usb?.title||'Press Play for USB mix'):spotify?(sp.now?.title||'Spotify Connect'):idle?'Press Play for CD':song.title||(track?'Track '+track:tracks.length?'Audio CD':'Insert a CD');
+ $('artist').textContent=radio?'Swedish radio':usb?(s.usb?.artist||''):spotify?(sp.now?.artist||''):(song.artist||meta.artist||'');
+ $('album').textContent=radio?'Live broadcast':usb?(s.usb?.album||''):spotify?(sp.now?.album||''):(meta.album||'');
  for(const id of ['title','artist','album'])$(id).title=$(id).textContent;
- const url=usb?(s.usb?.cover_url||''):spotify?(sp.now?.cover||''):(meta.cover_url||'');
+ const url=radio?'':usb?(s.usb?.cover_url||''):spotify?(sp.now?.cover||''):(meta.cover_url||'');
  if(url!==coverURL){coverURL=url;$('cover').hidden=true;$('placeholder').hidden=false;if(url)$('cover').src=url;else $('cover').removeAttribute('src')}
- $('message').textContent=failure||s.selection?.error||s.audio?.error||s.error||(usb?(s.usb_mix?'USB Music · shuffled':'USB Music'):spotify?'Control Spotify from your phone':idle?'CD will stay stopped until you press Play':meta.message||'');
+ $('message').textContent=failure||s.selection?.error||s.audio?.error||s.error||(radio?'Next / Previous changes station':usb?(s.usb_mix?'USB Music · shuffled':'USB Music'):spotify?'Control Spotify from your phone':idle?'CD will stay stopped until you press Play':meta.message||'');
  $('message').title=$('message').textContent;
- const total=idle||selecting?0:seconds(spotify?sp.now?.duration_ms/1000:m.duration||(usb?s.usb?.duration:0));
+ const total=radio||idle||selecting?0:seconds(spotify?sp.now?.duration_ms/1000:m.duration||(usb?s.usb?.duration:0));
  const elapsed=idle||selecting?0:seconds(spotify?sp.now?.position_ms/1000:m.elapsed);
  const played=total?Math.min(elapsed,total):elapsed;
- $('songTime').textContent=duration(played)+' / '+(total?duration(total):'—');
+ $('songTime').textContent=radio?'Live':duration(played)+' / '+(total?duration(total):'—');
  $('progress').max=total||1;$('progress').value=total?played:0;
  $('progress').setAttribute('aria-valuetext',duration(played)+(total?' of '+duration(total):' elapsed; duration unknown'));
- for(const action of buttons)$(action).disabled=busy||stale||(action!=='shuffle'&&(spotify||(!usb&&(idle?action!=='play':!tracks.length))));
+ for(const action of buttons)$(action).disabled=busy||stale||(action!=='shuffle'&&(spotify||(!usb&&!radio&&(idle?action!=='play':!tracks.length))));
+ $('source').disabled=busy||stale;
+ $('pause').textContent=radio?'Stop':'Pause';
  // The installed local boot page keeps its logo visible until this first render.
  // It has an opaque file:// origin; send only a readiness token, never state.
  if(!bootReady){bootReady=true;if(window.parent!==window)window.parent.postMessage('cdplayer:display-ready','*')}
 }
 async function refresh(){
  try{const r=await fetch('/api/status',{signal:AbortSignal.timeout(4000)});if(!r.ok)throw Error('Status unavailable');render(await r.json())}
- catch(e){navigation.cancel();$('status').textContent='Disconnected';for(const action of buttons)$(action).disabled=true}
+ catch(e){navigation.cancel();$('status').textContent='Disconnected';$('source').disabled=true;for(const action of buttons)$(action).disabled=true}
 }
 async function send(action,track,discID){
  if(busy)return;busy=true;navigation.cancel();failure='';for(const a of buttons)$(a).disabled=true;
@@ -84,7 +86,8 @@ async function send(action,track,discID){
  catch(e){failure=e.message}
  finally{busy=false;await refresh()}
 }
-function press(action){if($(action).disabled)return;if(state?.source!=='usb'&&(action==='next'||action==='previous'))navigation.step(action==='next'?1:-1);else send(action==='shuffle'?'usb-mix':action)}
+function press(action){if($(action).disabled)return;if(state?.source==='cd'&&(action==='next'||action==='previous'))navigation.step(action==='next'?1:-1);else send(action==='shuffle'?'usb-mix':action)}
+$('source').onclick=()=>send('source-next');
 for(const action of buttons)$(action).onclick=()=>press(action);
 // Keyboard equivalents for preview/testing; GPIO wiring is configured separately.
 document.addEventListener('keydown',e=>{const action={ArrowLeft:'previous',ArrowRight:'next',p:'pause',Enter:'play'}[e.key];if(action){e.preventDefault();if(!e.repeat)press(action)}});

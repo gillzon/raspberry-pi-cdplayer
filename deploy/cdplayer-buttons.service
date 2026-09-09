@@ -1,0 +1,23 @@
+[Unit]
+Description=CD player physical playback buttons (Waveshare Rev2.1)
+After=cdplayer.service systemd-udev-trigger.service
+Conflicts=cdplayer-backlight.service
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/lib/cdplayer/player-buttons.py --rev2.1
+Restart=on-failure
+RestartSec=5
+RuntimeDirectory=cdplayer-buttons
+WorkingDirectory=/run/cdplayer-buttons
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+DevicePolicy=closed
+DeviceAllow=/dev/gpiochip0 rw
+
+[Install]
+WantedBy=multi-user.target

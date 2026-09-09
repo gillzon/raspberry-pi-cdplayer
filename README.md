@@ -585,6 +585,61 @@ Preview with a 320×240 browser viewport. Keyboard equivalents for testing are
 Left/Right arrows (previous/next), P (pause), and Enter (play); these do not read
 GPIO buttons. Do not guess GPIO pins from the screen size alone.
 
+### Swedish Internet Radio and playback buttons
+
+Internet Radio is a separate mode with **P1, P2, P3, P4 Stockholm and
+Rockklassiker**. On the web player, choose a station under **Internet Radio ·
+Sweden** and press **Listen**. On `/display`, tap the source name at the top
+left to cycle **CD → USB → Radio → Spotify → CD** (Spotify appears only when
+configured). Entering Radio starts the last station selected during this run;
+the default after restarting the player is P1. The player still boots into CD
+mode. Selecting USB stops the previous source; press Play to start a USB mix or
+choose a song from the web library.
+
+In Radio mode, **Next / Previous** cycles stations and wraps at the ends.
+**Stop** closes the stream; **Play** reconnects to the current live broadcast,
+without a pause buffer. Radio uses MPD and the selected audio output. CD
+insertion does not interrupt it. Spotify Connect can take over, just as with
+USB playback. Connection/decoder errors appear on screen; press Play to retry.
+Internet access and an MPD build with HTTPS, AAC and MP3 support are required.
+All five presets were checked with live MPD playback on 2026-09-09. Station
+addresses live in `internal/radio/stations.go` and can be updated there if a
+broadcaster changes them.
+
+The optional four-button installer uses the **Waveshare 2.8inch RPi LCD (A)
+Rev2.1 on Pi 4** wiring:
+
+| Button | Action | BCM GPIO |
+| --- | --- | --- |
+| KEY1 | Change mode | 4 |
+| KEY2 | Play / pause (radio: play / stop) | 23 |
+| KEY3 | Next track / station | 24 |
+| KEY4 | Previous track / station | 25 |
+
+Spotify playback controls remain on your phone. Holding a button does not repeat;
+presses while a command is pending are ignored. Buttons call the local player
+at `127.0.0.1:8080`, so the standard web port must be enabled.
+
+After updating the player, run on the Pi as your normal user:
+
+```sh
+bash scripts/setup-player-buttons.sh --rev2.1
+```
+
+This installs `cdplayer-buttons.service`, starts it at boot, and disables the
+previous `cdplayer-backlight.service` to free KEY4. It does not claim the
+backlight GPIO18. No reboot is needed. The old brightness installer remains
+available below, but the two button services cannot run together.
+
+```sh
+journalctl -u cdplayer-buttons -n 30 --no-pager
+sudo systemctl disable --now cdplayer-buttons  # stop physical controls
+```
+
+Station sources: [Sveriges Radio stream links](https://www.sverigesradio.se/artikel/lankar-till-ljudstrommar-for-alla-kanaler),
+[P4 Stockholm official channel API](https://api.sr.se/api/v2/channels/701?format=json),
+and [Rockklassiker / Bauer Media](https://bauermedia.se/radiokanal/rockklassiker/).
+
 ### Physical brightness button (Waveshare Rev2.1)
 
 On the **2.8inch RPi LCD (A) marked Rev2.1**, **KEY4** can cycle brightness:

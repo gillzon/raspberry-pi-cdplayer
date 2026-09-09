@@ -21,6 +21,7 @@ import (
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/metadata"
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/mpd"
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/player"
+	"github.com/gillzon/raspberry-pi-cdplayer/internal/radio"
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/spotify"
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/systeminfo"
 )
@@ -38,6 +39,7 @@ var navigation []byte
 var libraryScript []byte
 
 type State struct {
+	Radio          *radio.Station        `json:"radio,omitempty"`
 	USBMix         bool                  `json:"usb_mix"`
 	USB            *library.Track        `json:"usb,omitempty"`
 	USBQueueLength int                   `json:"usb_queue_length"`
@@ -55,13 +57,14 @@ type State struct {
 }
 
 type Command struct {
-	SongID string        `json:"song_id"`
-	Output string        `json:"output"`
-	Event  spotify.Event `json:"event"`
-	Token  string        `json:"token"`
-	Action string        `json:"action"`
-	Track  int           `json:"track"`
-	DiscID string        `json:"disc_id"`
+	Station string        `json:"station"`
+	SongID  string        `json:"song_id"`
+	Output  string        `json:"output"`
+	Event   spotify.Event `json:"event"`
+	Token   string        `json:"token"`
+	Action  string        `json:"action"`
+	Track   int           `json:"track"`
+	DiscID  string        `json:"disc_id"`
 }
 
 type Server struct {
@@ -182,6 +185,10 @@ func (s *Server) Handler() http.Handler {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Write(page)
 	})
+	mux.HandleFunc("GET /api/radio", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(radio.Stations())
+	})
 	mux.HandleFunc("GET /api/status", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
@@ -203,7 +210,12 @@ func (s *Server) Handler() http.Handler {
 			return
 		}
 		switch cmd.Action {
-		case "usb-mix", "outputs", "output", "spotify-event", "spotify-start", "source-cd", "play", "pause", "stop", "next", "previous", "eject":
+		case "radio-play":
+			if _, ok := radio.Find(cmd.Station); !ok {
+				http.Error(w, "Unknown radio station", 400)
+				return
+			}
+		case "source-usb", "source-next", "source-radio", "source-spotify", "toggle", "usb-mix", "outputs", "output", "spotify-event", "spotify-start", "source-cd", "play", "pause", "stop", "next", "previous", "eject":
 		case "usb-play":
 			if !songIDPattern.MatchString(cmd.SongID) {
 				http.Error(w, "Invalid song", 400)
