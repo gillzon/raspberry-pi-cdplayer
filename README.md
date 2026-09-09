@@ -585,10 +585,35 @@ Preview with a 320×240 browser viewport. Keyboard equivalents for testing are
 Left/Right arrows (previous/next), P (pause), and Enter (play); these do not read
 GPIO buttons. Do not guess GPIO pins from the screen size alone.
 
+### Keep the working touchscreen calibration after reboot
+
+For the rotated Waveshare display using **ADS7846 Touchscreen** with X11/evdev,
+these confirmed working values can be saved permanently:
+
+```sh
+bash scripts/setup-touchscreen.sh
+sudo reboot
+```
+
+The installer writes `/etc/X11/xorg.conf.d/99-z-cdplayer-touch.conf`, matching
+`Evdev Axis Calibration = 198 3679 292 3800`, `Evdev Axes Swap = 0`, and
+`Evdev Axis Inversion = 0 1`. It loads after `99-calibration.conf` and applies
+only to ADS7846. It preserves the display rotation and other input devices.
+Run it on each Pi using the same screen orientation; a different orientation
+may need different values. The separate display installer does not overwrite
+this calibration. Restarting only Chromium does not apply Xorg settings;
+reboot or restart the graphical session.
+
+To undo, remove `/etc/X11/xorg.conf.d/99-z-cdplayer-touch.conf` and reboot.
+If that file existed before installation, its first backup is saved beside it
+with `.before-cdplayer` appended.
+
+These are the persistent options documented by [Xorg's evdev driver](https://xorg.freedesktop.org/archive/X11R7.5/doc/man/man4/evdev.4.html).
+
 ### Swedish Internet Radio and playback buttons
 
 Internet Radio is a separate mode with **P1, P2, P3, P4 Stockholm and
-Rockklassiker**. On the web player, choose a station under **Internet Radio ·
+Rockklassiker, RIX FM and Energy (NRJ)**. On the web player, choose a station under **Internet Radio ·
 Sweden** and press **Listen**. On `/display`, tap the source name at the top
 left to cycle **CD → USB → Radio → Spotify → CD** (Spotify appears only when
 configured). Entering Radio starts the last station selected during this run;
@@ -602,7 +627,8 @@ without a pause buffer. Radio uses MPD and the selected audio output. CD
 insertion does not interrupt it. Spotify Connect can take over, just as with
 USB playback. Connection/decoder errors appear on screen; press Play to retry.
 Internet access and an MPD build with HTTPS, AAC and MP3 support are required.
-All five presets were checked with live MPD playback on 2026-09-09. Station
+The original five presets were checked with live MPD playback on 2026-09-09;
+RIX FM and Energy (NRJ) were also checked for decodable live MP3 audio. Station
 addresses live in `internal/radio/stations.go` and can be updated there if a
 broadcaster changes them.
 
@@ -955,8 +981,22 @@ start it and queue the other songs from the same album and folder in track order
 Previous/Next move within that queue. **Mix all** shuffles every available song in
 the USB library into a new queue, regardless of the current search or page. Each
 song appears once; the mix stops at the end. The **Shuffle** button on `/display`
-starts the same USB mix, including when CD or Spotify is selected. Playback uses
-your selected MPD output.
+starts the same USB mix from CD, USB, Radio or Spotify and shows “Preparing USB
+shuffle…” while it loads. Playback uses your selected MPD output. Large mixes
+are sent in batches; preparing a slow disk can take up to two minutes.
+
+For libraries larger than MPD's default 16,384-song queue, allow a larger queue
+once on the Pi (the regular `scripts/update.sh` now does this automatically):
+
+```sh
+sudo python3 scripts/configure-mpd-queue.py /etc/mpd.conf
+sudo systemctl restart mpd
+```
+
+The helper backs up the configuration, raises the queue limit to 100,000 songs,
+and preserves audio outputs and any larger existing limit. Restarting MPD
+interrupts current playback. Then press Shuffle again. The dedicated MPD config
+also includes the larger limit. See [MPD resource limits](https://www.musicpd.org/doc/user.html#resource-limitations).
 
 MP3 tags supply the title, artist, album, track number, and duration. Missing tags
 fall back to the filename, “Unknown artist”, and folder name. Embedded JPEG/PNG

@@ -102,7 +102,7 @@ async function control(action,track,discID,songID,station){
  if(busy)return;
  navigation.cancel();
  busy=true;document.querySelectorAll('[data-action],[data-track]').forEach(b=>b.disabled=true);$('commandError').textContent='';
- try{const r=await fetch('/api/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,track,disc_id:discID,song_id:songID,station}),signal:AbortSignal.timeout(30000)});if(!r.ok)throw new Error(await r.text())}
+ try{const r=await fetch('/api/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,track,disc_id:discID,song_id:songID,station}),signal:AbortSignal.timeout(['usb-mix','play'].includes(action)?125000:30000)});if(!r.ok)throw new Error(await r.text())}
  catch(e){$('commandError').textContent=e.message}
  finally{busy=false;await refresh()}
 }

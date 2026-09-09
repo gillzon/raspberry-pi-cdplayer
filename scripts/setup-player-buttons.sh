@@ -32,7 +32,10 @@ fi
 sudo install -D -m 0644 "$repo_dir/scripts/player-buttons.py" /usr/local/lib/cdplayer/player-buttons.py
 sudo install -m 0644 "$repo_dir/deploy/cdplayer-buttons.service" /etc/systemd/system/cdplayer-buttons.service
 sudo systemctl daemon-reload
-sudo systemctl reset-failed cdplayer-buttons.service
+# A newly installed unit may not be loaded yet. Only reset an existing failure.
+if systemctl is-failed --quiet cdplayer-buttons.service; then
+    sudo systemctl reset-failed cdplayer-buttons.service
+fi
 sudo systemctl enable cdplayer-buttons.service
 sudo systemctl restart cdplayer-buttons.service
 sleep 2

@@ -3,7 +3,9 @@
 package web
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	_ "embed"
 	"encoding/json"
 	"fmt"
@@ -32,6 +34,8 @@ var page []byte
 //go:embed display.html
 var displayPage []byte
 
+var displayVersion = fmt.Sprintf("%x", sha256.Sum256(displayPage))
+
 //go:embed navigation.js
 var navigation []byte
 
@@ -39,6 +43,7 @@ var navigation []byte
 var libraryScript []byte
 
 type State struct {
+	DisplayVersion string                `json:"display_version"`
 	Radio          *radio.Station        `json:"radio,omitempty"`
 	USBMix         bool                  `json:"usb_mix"`
 	USB            *library.Track        `json:"usb,omitempty"`
@@ -150,8 +155,8 @@ func (s *Server) Handler() http.Handler {
 	})
 	mux.HandleFunc("GET /display", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Write(displayPage)
+		w.Header().Set("Cache-Control", "no-store")
+		w.Write(bytes.ReplaceAll(displayPage, []byte("__DISPLAY_VERSION__"), []byte(displayVersion)))
 	})
 	mux.HandleFunc("GET /navigation.js", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
@@ -195,6 +200,7 @@ func (s *Server) Handler() http.Handler {
 		s.mu.RLock()
 		state := s.state
 		s.mu.RUnlock()
+		state.DisplayVersion = displayVersion
 		if s.Selection != nil {
 			state.Selection = s.Selection()
 		}
@@ -230,7 +236,11 @@ func (s *Server) Handler() http.Handler {
 			http.Error(w, "Unknown action", 400)
 			return
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
+		timeout := 25 * time.Second
+		if cmd.Action == "usb-mix" || cmd.Action == "play" || cmd.Action == "toggle" {
+			timeout = 2 * time.Minute
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), timeout)
 		defer cancel()
 		if s.Control == nil {
 			http.Error(w, "Player unavailable", 503)

@@ -11,6 +11,7 @@ body{margin:0;width:min(320px,100vw);height:min(240px,100dvh);overflow:hidden;pa
 body>*{min-width:0;min-height:0}
 header{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px;color:#b6c9bc;overflow:hidden}
 header span{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#source{max-width:60%;flex-shrink:0;padding:1px 5px}
 #status{flex:1;text-align:right}
 #clock{flex-shrink:0;font-variant-numeric:tabular-nums}
 main{display:flex;gap:10px;align-items:center;overflow:hidden}
@@ -38,30 +39,34 @@ button:focus-visible{outline:2px solid #c9fbd6;outline-offset:-3px}
 <div class="controls"><button id="previous">Previous</button><button id="pause">Pause</button><button id="play">Play</button><button id="next">Next</button><button id="shuffle" title="Shuffle all USB songs" aria-label="Shuffle all USB songs" disabled>Shuffle</button></div>
 <script src="/navigation.js"></script>
 <script>
+const displayVersion='__DISPLAY_VERSION__';
 const $=id=>document.getElementById(id);
 const seconds=value=>{const n=Number(value);return Number.isFinite(n)?Math.max(0,n):0};
 const duration=value=>{const n=Math.floor(seconds(value));return Math.floor(n/60)+':'+String(n%60).padStart(2,'0')};
 const buttons=['previous','pause','play','next','shuffle'];
-let state=null,busy=false,coverURL='',failure='',bootReady=false;
+let state=null,busy=false,coverURL='',failure='',pendingAction='',bootReady=false;
 const navigation=new TrackNavigation((track,discID)=>send('track',track,discID),track=>{if(track!==null)$('message').textContent='Selecting track '+track+'…'});
 $('cover').onload=()=>{$('cover').hidden=false;$('placeholder').hidden=true};
 $('cover').onerror=()=>{$('cover').hidden=true;$('placeholder').hidden=false};
 function render(s){
  state=s;
- const radio=s.source==='radio',usb=s.source==='usb',spotify=s.source==='spotify',idle=s.source==='idle',m=s.mpd||{},sp=s.spotify||{},tracks=s.disc?.Tracks||[],meta=s.metadata||{};
- const selecting=s.selection?.pending;
+ const cd=s.source==='cd',radio=s.source==='radio',usb=s.source==='usb',spotify=s.source==='spotify',idle=s.source==='idle',m=s.mpd||{},sp=s.spotify||{},tracks=s.disc?.Tracks||[],meta=s.metadata||{};
+ const selecting=cd&&s.selection?.pending;
  const position=selecting?tracks.indexOf(s.selection.track):(m.song===undefined?-1:Number(m.song)),track=tracks[position],song=meta.tracks?.[track]||{};
  const stale=(!s.updated||Date.now()-Date.parse(s.updated)>5000)&&!selecting;
  navigation.update(s.disc?.ID,tracks,position);if(stale||spotify||idle||usb||radio)navigation.cancel();
- $('source').textContent=radio?'Radio ▾':usb?'USB Music':spotify?'Spotify':idle?'CD · ready':'CD';
+ $('source').textContent=radio?'Radio · '+(s.radio?.name||'Live'):usb?'USB Music':spotify?'Spotify':idle?'CD · ready':cd?'CD':'Player';
+ $('source').title=$('source').textContent+' · Change playback mode';
+ $('source').setAttribute('aria-label',$('source').title);
  $('status').textContent=selecting?'Changing track…':busy?'Please wait…':stale?'Status delayed':idle?'Stopped':spotify?({playing:'Playing',paused:'Paused',loading:'Loading',connected:'Connected',stopped:'Stopped'}[sp.playback]||'Connected'):({play:'Playing',pause:'Paused',stop:'Stopped'}[m.state]||'Waiting');
- $('title').textContent=radio?(s.radio?.name||'Internet Radio'):usb?(s.usb?.title||'Press Play for USB mix'):spotify?(sp.now?.title||'Spotify Connect'):idle?'Press Play for CD':song.title||(track?'Track '+track:tracks.length?'Audio CD':'Insert a CD');
- $('artist').textContent=radio?'Swedish radio':usb?(s.usb?.artist||''):spotify?(sp.now?.artist||''):(song.artist||meta.artist||'');
- $('album').textContent=radio?'Live broadcast':usb?(s.usb?.album||''):spotify?(sp.now?.album||''):(meta.album||'');
+ $('title').textContent=radio?(s.radio?.name||'Internet Radio'):usb?(s.usb?.title||'Press Play for USB mix'):spotify?(sp.now?.title||'Spotify Connect'):idle?'Press Play for CD':!cd?'Waiting for playback source':song.title||(track?'Track '+track:tracks.length?'Audio CD':'Insert a CD');
+ $('artist').textContent=radio?'Swedish radio':usb?(s.usb?.artist||''):spotify?(sp.now?.artist||''):cd?(song.artist||meta.artist||''):'';
+ $('album').textContent=radio?'Live broadcast':usb?(s.usb?.album||''):spotify?(sp.now?.album||''):cd?(meta.album||''):'';
  for(const id of ['title','artist','album'])$(id).title=$(id).textContent;
- const url=radio?'':usb?(s.usb?.cover_url||''):spotify?(sp.now?.cover||''):(meta.cover_url||'');
+ const url=radio?'':usb?(s.usb?.cover_url||''):spotify?(sp.now?.cover||''):cd?(meta.cover_url||''):'';
+ $('placeholder').textContent=radio?'RADIO':usb?'USB':'♫';
  if(url!==coverURL){coverURL=url;$('cover').hidden=true;$('placeholder').hidden=false;if(url)$('cover').src=url;else $('cover').removeAttribute('src')}
- $('message').textContent=failure||s.selection?.error||s.audio?.error||s.error||(radio?'Next / Previous changes station':usb?(s.usb_mix?'USB Music · shuffled':'USB Music'):spotify?'Control Spotify from your phone':idle?'CD will stay stopped until you press Play':meta.message||'');
+ $('message').textContent=(busy&&pendingAction==='usb-mix'?'Preparing USB shuffle…':failure)||(cd&&(s.selection?.error||s.audio?.error))||s.error||(radio?'Next / Previous changes station':usb?(s.usb_mix?'USB Music · shuffled':'USB Music'):spotify?'Control Spotify from your phone':idle?'CD will stay stopped until you press Play':cd?(meta.message||''):'');
  $('message').title=$('message').textContent;
  const total=radio||idle||selecting?0:seconds(spotify?sp.now?.duration_ms/1000:m.duration||(usb?s.usb?.duration:0));
  const elapsed=idle||selecting?0:seconds(spotify?sp.now?.position_ms/1000:m.elapsed);
@@ -77,14 +82,14 @@ function render(s){
  if(!bootReady){bootReady=true;if(window.parent!==window)window.parent.postMessage('cdplayer:display-ready','*')}
 }
 async function refresh(){
- try{const r=await fetch('/api/status',{signal:AbortSignal.timeout(4000)});if(!r.ok)throw Error('Status unavailable');render(await r.json())}
+ try{const r=await fetch('/api/status',{cache:'no-store',signal:AbortSignal.timeout(4000)});if(!r.ok)throw Error('Status unavailable');const next=await r.json();if(next.display_version&&next.display_version!==displayVersion){window.location.reload();return}render(next)}
  catch(e){navigation.cancel();$('status').textContent='Disconnected';$('source').disabled=true;for(const action of buttons)$(action).disabled=true}
 }
 async function send(action,track,discID){
- if(busy)return;busy=true;navigation.cancel();failure='';for(const a of buttons)$(a).disabled=true;
- try{const r=await fetch('/api/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,track,disc_id:discID}),signal:AbortSignal.timeout(30000)});if(!r.ok)throw Error(await r.text())}
+ if(busy)return;busy=true;pendingAction=action;navigation.cancel();failure='';if(state)render(state);for(const a of buttons)$(a).disabled=true;
+ try{const r=await fetch('/api/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,track,disc_id:discID}),signal:AbortSignal.timeout(['usb-mix','play'].includes(action)?125000:30000)});if(!r.ok)throw Error(await r.text())}
  catch(e){failure=e.message}
- finally{busy=false;await refresh()}
+ finally{busy=false;pendingAction='';await refresh()}
 }
 function press(action){if($(action).disabled)return;if(state?.source==='cd'&&(action==='next'||action==='previous'))navigation.step(action==='next'?1:-1);else send(action==='shuffle'?'usb-mix':action)}
 $('source').onclick=()=>send('source-next');

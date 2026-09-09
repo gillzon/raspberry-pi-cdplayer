@@ -103,7 +103,7 @@ func (c *Client) commandValues(command string, valueReceived func(string, string
 			return values, nil
 		}
 		if strings.HasPrefix(line, "ACK ") {
-			return nil, fmt.Errorf("MPD %s: %s", command, line)
+			return nil, fmt.Errorf("MPD %s: %s", commandLabel(command), line)
 		}
 		if key, value, ok := strings.Cut(line, ": "); ok {
 			values[key] = value
@@ -120,7 +120,15 @@ func (c *Client) commandValues(command string, valueReceived func(string, string
 	return nil, commandFailure(command, timeout, err)
 }
 
+func commandLabel(command string) string {
+	if strings.HasPrefix(command, "command_list_begin\n") {
+		return "queue batch"
+	}
+	return command
+}
+
 func commandFailure(command string, timeout time.Duration, err error) error {
+	command = commandLabel(command)
 	var networkError net.Error
 	if errors.As(err, &networkError) && networkError.Timeout() {
 		return fmt.Errorf("MPD command %q timed out after %s; its outcome is unknown; the connection was closed for recovery: %w", command, timeout, err)
@@ -165,11 +173,39 @@ func (c *Client) StartURLs(urls []string, position int) error {
 			return err
 		}
 	}
-	for _, uri := range urls {
-		if _, err := c.command("add " + strconv.Quote(uri)); err != nil {
+	// Small queues retain individual commands; large USB mixes use bounded
+	// command lists to avoid one socket round trip per song.
+	for offset := 0; offset < len(urls); {
+		end := offset + 256
+		if end > len(urls) {
+			end = len(urls)
+		}
+		commands := make([]string, 0, end-offset)
+		for _, uri := range urls[offset:end] {
+			commands = append(commands, "add "+strconv.Quote(uri))
+		}
+		command := strings.Join(commands, "\n")
+		if len(urls) > 256 {
+			command = "command_list_begin\n" + command + "\ncommand_list_end"
+		} else {
+			for _, cmd := range commands {
+				if _, err := c.command(cmd); err != nil {
+					return err
+				}
+			}
+			offset = end
+			continue
+		}
+		if _, err := c.command(command); err != nil {
+			// Do not play a partial mix after a queue-limit or command-list failure.
+			if strings.Contains(err.Error(), "playlist is too large") || strings.Contains(err.Error(), "Playlist is too large") {
+				return fmt.Errorf("USB mix exceeds MPD's queue limit; run sudo python3 scripts/configure-mpd-queue.py /etc/mpd.conf and restart MPD: %w", err)
+			}
 			return err
 		}
+		offset = end
 	}
+
 	err := c.Control("track", position)
 	if err == nil {
 		c.requestedAt = time.Now()

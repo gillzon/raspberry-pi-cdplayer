@@ -28,7 +28,9 @@ func serve(t *testing.T, handler func(string) string) (*Client, <-chan []string)
 		for scanner.Scan() {
 			cmd := scanner.Text()
 			commands = append(commands, cmd)
-			fmt.Fprint(conn, handler(cmd))
+			if response := handler(cmd); response != "" {
+				fmt.Fprint(conn, response)
+			}
 		}
 		done <- commands
 	}()
@@ -339,5 +341,79 @@ func TestUSBAlbumStartsSelectedSong(t *testing.T) {
 	cmds := <-done
 	if cmds[len(cmds)-1] != "play 1" {
 		t.Fatalf("commands: %v", cmds)
+	}
+}
+
+func TestLargeUSBMixUsesBoundedBatchesAndStartsAfterEverySong(t *testing.T) {
+	inList, added, batches := false, 0, 0
+	c, done := serve(t, func(cmd string) string {
+		switch {
+		case cmd == "command_list_begin":
+			inList = true
+			batches++
+			return ""
+		case cmd == "command_list_end":
+			inList = false
+			return "OK\n"
+		case strings.HasPrefix(cmd, "add "):
+			added++
+			if inList {
+				return ""
+			}
+		case cmd == "play 0":
+			if added != 27362 {
+				t.Errorf("started before full mix: %d songs", added)
+			}
+		}
+		return "OK\n"
+	})
+	if _, err := c.Connect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	urls := make([]string, 27362)
+	for i := range urls {
+		urls[i] = fmt.Sprintf("http://127.0.0.1:123/music/%064x.mp3", i)
+	}
+	if err := c.StartURLs(urls, 0); err != nil {
+		t.Fatal(err)
+	}
+	c.Close()
+	commands := <-done
+	if batches != 107 || commands[len(commands)-1] != "play 0" {
+		t.Fatalf("batches=%d, last command=%s", batches, commands[len(commands)-1])
+	}
+}
+
+func TestFailedBatchNeverPlaysPartialMix(t *testing.T) {
+	inList := false
+	c, done := serve(t, func(cmd string) string {
+		if cmd == "command_list_begin" {
+			inList = true
+			return ""
+		}
+		if cmd == "command_list_end" {
+			inList = false
+			return "ACK [51@0] {add} playlist is too large\n"
+		}
+		if inList {
+			return ""
+		}
+		return "OK\n"
+	})
+	if _, err := c.Connect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	urls := make([]string, 257)
+	for i := range urls {
+		urls[i] = "http://localhost/music.mp3"
+	}
+	if err := c.StartURLs(urls, 0); err == nil || !strings.Contains(err.Error(), "queue limit") {
+		t.Fatalf("unexpected result: %v", err)
+	}
+	c.Close()
+	for _, cmd := range <-done {
+		if strings.HasPrefix(cmd, "play ") {
+			t.Fatal("partial mix played")
+		}
 	}
 }

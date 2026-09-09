@@ -68,7 +68,8 @@ if ! getent group cdrom >/dev/null; then
     echo "The cdrom group is missing; configure CD drive permissions first." >&2
     exit 1
 fi
-restart_mpd=false
+restart_mpd=true
+sudo python3 scripts/configure-mpd-queue.py /etc/mpd.conf
 # Add selectable outputs using stable ALSA card names. Existing audio outputs
 # remain enabled until the user chooses a destination in Settings.
 if [[ -d /proc/asound ]]; then

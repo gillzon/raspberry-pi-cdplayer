@@ -255,7 +255,7 @@ func main() {
 			}
 		}
 		receiver.Callback = "http://" + net.JoinHostPort(host, port) + "/api/control"
-		server := &http.Server{Handler: website.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 35 * time.Second, IdleTimeout: 60 * time.Second}
+		server := &http.Server{Handler: website.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 130 * time.Second, IdleTimeout: 60 * time.Second}
 		defer server.Close()
 		go func() {
 			if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {

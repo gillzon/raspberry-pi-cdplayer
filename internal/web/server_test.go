@@ -130,3 +130,24 @@ func TestRadioCatalogDoesNotExposeStreamURLs(t *testing.T) {
 		t.Fatalf("unexpected catalog: %s", w.Body.String())
 	}
 }
+
+func TestDisplayVersionMatchesStatusAndPageCannotBeCached(t *testing.T) {
+	handler := (&Server{}).Handler()
+	page := httptest.NewRecorder()
+	handler.ServeHTTP(page, httptest.NewRequest("GET", "/display", nil))
+	status := httptest.NewRecorder()
+	handler.ServeHTTP(status, httptest.NewRequest("GET", "/api/status", nil))
+	var state State
+	if err := json.Unmarshal(status.Body.Bytes(), &state); err != nil {
+		t.Fatal(err)
+	}
+	if state.DisplayVersion == "" || !strings.Contains(page.Body.String(), "const displayVersion='"+state.DisplayVersion+"'") {
+		t.Fatal("page and status versions disagree")
+	}
+	if strings.Contains(page.Body.String(), "__DISPLAY_VERSION__") {
+		t.Fatal("unexpanded display version")
+	}
+	if page.Header().Get("Cache-Control") != "no-store" {
+		t.Fatal("display can be cached")
+	}
+}
