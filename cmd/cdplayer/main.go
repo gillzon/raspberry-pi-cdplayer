@@ -268,13 +268,14 @@ func main() {
 	ticker := time.NewTicker(*poll)
 	defer ticker.Stop()
 	slog.Info("CD player starting", "device", *device, "mpd", *address)
+	screenAsleep := false
 	selectedStation := radio.Stations()[0]
 	lastError := ""
 	publish := func(err error) {
 		trackRequests.Update(controller.Disc().ID, controller.Disc().Tracks, controller.Source() == "cd")
 		albums.Observe(ctx, controller.Disc())
 		selectedDevice = drive.DevicePath()
-		state := web.State{Outputs: outputs, Source: controller.Source(), Spotify: receiver.State, Device: selectedDevice, Disc: controller.Disc(), MPD: backend.Status(), Updated: time.Now()}
+		state := web.State{ScreenAsleep: screenAsleep, Outputs: outputs, Source: controller.Source(), Spotify: receiver.State, Device: selectedDevice, Disc: controller.Disc(), MPD: backend.Status(), Updated: time.Now()}
 		if controller.Source() == "radio" {
 			station := selectedStation
 			state.Radio = &station
@@ -312,6 +313,23 @@ func main() {
 		return backend.StartURLs([]string{station.URL}, 0)
 	}
 	handleControl := func(request controlRequest) error {
+		switch request.command.Action {
+		case "screen-sleep":
+			screenAsleep = true
+			publish(nil)
+			return nil
+		case "screen-wake":
+			screenAsleep = false
+			publish(nil)
+			return nil
+		case "screen-toggle":
+			screenAsleep = !screenAsleep
+			publish(nil)
+			return nil
+		case "play", "toggle", "next", "previous", "source-next", "source-cd", "source-usb", "source-radio", "radio-play", "usb-play", "usb-mix", "source-spotify":
+			screenAsleep = false
+		}
+
 		if request.command.Action == "source-next" {
 			switch controller.Source() {
 			case "cd", "idle":
@@ -429,6 +447,9 @@ func main() {
 				if !receiver.Accept(request.command.Token) {
 					err = fmt.Errorf("obsolete Spotify receiver")
 				} else {
+					if spotifyWakesScreen(request.command.Event, receiver.State.Playback) {
+						screenAsleep = false
+					}
 					receiver.Apply(request.command.Event)
 					if request.command.Event.Kind == "session_disconnected" {
 						controller.SpotifyDisconnected()
@@ -438,6 +459,9 @@ func main() {
 				if !receiver.Accept(request.command.Token) {
 					err = fmt.Errorf("obsolete Spotify receiver")
 				} else {
+					if spotifyWakesScreen(request.command.Event, receiver.State.Playback) {
+						screenAsleep = false
+					}
 					err = controller.UseSpotify(request.ctx)
 					if err == nil && request.command.Event.Kind == "session_connected" {
 						receiver.Apply(request.command.Event)
@@ -604,4 +628,9 @@ func envDefault(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+// Position and metadata events must not undo a user's screen sleep request.
+func spotifyWakesScreen(event spotify.Event, previous string) bool {
+	return event.Kind == "session_connected" || event.Kind == "sink" || (event.Kind == "playing" && previous != "playing")
 }

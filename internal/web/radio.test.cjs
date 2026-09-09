@@ -23,7 +23,7 @@ for(const page of ['display','index'])test(page+' shows live radio and changes s
  assert.equal(get(page==='display'?'songTime':'time').textContent,'Live');
  if(page==='display'){
   assert.equal(get('next').disabled,false);
-  assert.equal(get('pause').textContent,'Stop');
+  assert.equal(get('pause').title,'Stop radio');
   await vm.runInContext("press('next')",context);
  }else{
   assert.equal(get('tracks').hidden,true);

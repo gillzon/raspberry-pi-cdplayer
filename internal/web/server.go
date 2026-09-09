@@ -43,6 +43,7 @@ var navigation []byte
 var libraryScript []byte
 
 type State struct {
+	ScreenAsleep   bool                  `json:"screen_asleep"`
 	DisplayVersion string                `json:"display_version"`
 	Radio          *radio.Station        `json:"radio,omitempty"`
 	USBMix         bool                  `json:"usb_mix"`
@@ -221,7 +222,7 @@ func (s *Server) Handler() http.Handler {
 				http.Error(w, "Unknown radio station", 400)
 				return
 			}
-		case "source-usb", "source-next", "source-radio", "source-spotify", "toggle", "usb-mix", "outputs", "output", "spotify-event", "spotify-start", "source-cd", "play", "pause", "stop", "next", "previous", "eject":
+		case "screen-sleep", "screen-wake", "screen-toggle", "source-usb", "source-next", "source-radio", "source-spotify", "toggle", "usb-mix", "outputs", "output", "spotify-event", "spotify-start", "source-cd", "play", "pause", "stop", "next", "previous", "eject":
 		case "usb-play":
 			if !songIDPattern.MatchString(cmd.SongID) {
 				http.Error(w, "Invalid song", 400)

@@ -29,6 +29,27 @@ class Press:
         return False
 
 
+class ModePress(Press):
+    def __init__(self, pressed=False):
+        super().__init__(pressed)
+        self.started = None
+        self.held = pressed
+
+    def update(self, pressed, now):
+        was_pressed = self.stable
+        super().update(pressed, now)
+        if not was_pressed and self.stable:
+            self.started, self.held = now, False
+        if self.stable and self.started is not None and not self.held and now - self.started >= 1:
+            self.held = True
+            return 'screen-toggle'
+        if was_pressed and not self.stable:
+            action = None if self.held else 'source-next'
+            self.started = None
+            return action
+        return None
+
+
 def send(action):
     request = urllib.request.Request('http://127.0.0.1:8080/api/control',
                                      data=json.dumps({'action': action}).encode(),
@@ -73,14 +94,15 @@ def main():
             inputs = []
             for pin, action in BUTTONS:
                 button = stack.enter_context(DigitalInputDevice(pin, pull_up=True, pin_factory=factory))
-                inputs.append((button, Press(button.is_active), action))
-            logging.info('KEY1 Mode; KEY2 Play/Pause (radio: Stop); KEY3 Next; KEY4 Previous')
+                inputs.append((button, (ModePress if action == 'source-next' else Press)(button.is_active), action))
+            logging.info('KEY1 Mode (hold: sleep/wake); KEY2 Play/Pause (radio: Stop); KEY3 Next; KEY4 Previous')
             while not stop.wait(.02):
                 now = time.monotonic()
                 for button, press, action in inputs:
-                    if press.update(button.is_active, now) and not busy.is_set():
+                    event = press.update(button.is_active, now)
+                    if event and not busy.is_set():
                         busy.set()
-                        commands.put_nowait(action)
+                        commands.put_nowait(event if isinstance(event, str) else action)
     finally:
         factory.close()
 

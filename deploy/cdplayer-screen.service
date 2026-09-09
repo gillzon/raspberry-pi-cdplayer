@@ -1,0 +1,19 @@
+[Unit]
+Description=CD player screen sleep and wake
+After=cdplayer.service
+Conflicts=cdplayer-backlight.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/lib/cdplayer/screen-sleep.py
+ExecStopPost=/usr/bin/python3 /usr/local/lib/cdplayer/screen-sleep.py --wake
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/sys/devices/platform/rpi_backlight
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

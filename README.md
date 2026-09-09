@@ -585,6 +585,33 @@ Preview with a 320×240 browser viewport. Keyboard equivalents for testing are
 Left/Right arrows (previous/next), P (pause), and Enter (play); these do not read
 GPIO buttons. Do not guess GPIO pins from the screen size alone.
 
+### Screen sleep with Spotify wake
+
+Tap the **moon icon** at the top of `/display`, or hold **KEY1 for one second**, to turn
+off the LCD backlight. The Pi, network, current audio and Spotify receiver stay
+running. A new Spotify connection or transition into playing wakes the screen;
+routine track metadata updates do not. Hold KEY1 again to wake manually, or
+use a playback button. A short KEY1 press still changes modes (on release).
+AirPlay is not currently implemented, so there is no AirPlay wake integration.
+
+After updating/restarting cdplayer, install on the Pi:
+
+```sh
+bash scripts/setup-screen-sleep.sh
+bash scripts/setup-player-buttons.sh --rev2.1
+```
+
+The screen service uses the existing on/off `rpi_backlight` sysfs interface,
+without claiming GPIO18. It restores the backlight if stopped or if the player
+cannot be reached. No suspend or shutdown is performed. The Sleep button
+requires this service to physically turn the panel off. Touching the dark panel
+is not a dedicated wake gesture; use KEY1 or reconnect Spotify instead.
+
+```sh
+journalctl -u cdplayer-screen -n 30 --no-pager
+sudo systemctl disable --now cdplayer-screen  # restores the backlight
+```
+
 ### Keep the working touchscreen calibration after reboot
 
 For the rotated Waveshare display using **ADS7846 Touchscreen** with X11/evdev,
@@ -614,7 +641,7 @@ These are the persistent options documented by [Xorg's evdev driver](https://xor
 
 Internet Radio is a separate mode with **P1, P2, P3, P4 Stockholm and
 Rockklassiker, RIX FM and Energy (NRJ)**. On the web player, choose a station under **Internet Radio ·
-Sweden** and press **Listen**. On `/display`, tap the source name at the top
+Sweden** and press **Listen**. On `/display`, tap the mode arrows at the top
 left to cycle **CD → USB → Radio → Spotify → CD** (Spotify appears only when
 configured). Entering Radio starts the last station selected during this run;
 the default after restarting the player is P1. The player still boots into CD
