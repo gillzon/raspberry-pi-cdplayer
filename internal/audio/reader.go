@@ -20,6 +20,9 @@ import (
 //go:embed reader.py
 var readerProgram string
 
+// DefaultReadSpeed keeps the drive quiet with headroom above real-time playback.
+const DefaultReadSpeed = 2
+
 type Layout struct {
 	Number int `json:"number"`
 	Start  int `json:"start"`
@@ -44,13 +47,13 @@ type processReader struct {
 }
 
 func openReader(ctx context.Context, device string, layout []Layout) (Reader, error) {
-	return openReaderProgram(ctx, device, layout, readerProgram)
+	return ReaderWithOptions(false, DefaultReadSpeed)(ctx, device, layout)
 }
 
 // ReaderWithVerification enables extra overlapping reads and software repair.
 // The default reader favours playback latency over extraction verification.
 func ReaderWithVerification(verify bool) OpenReader {
-	return ReaderWithOptions(verify, 0)
+	return ReaderWithOptions(verify, DefaultReadSpeed)
 }
 
 // ReaderWithOptions optionally requests a CD read-speed multiplier. This is

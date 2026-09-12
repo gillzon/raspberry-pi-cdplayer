@@ -21,7 +21,10 @@ import (
 )
 
 const sectorBytes = 2352
-const blockSectors = 75
+
+// Publish audio every 200ms of CD audio so startup and track changes do not
+// wait for a full second of audio to be read at the quiet drive speed.
+const blockSectors = 15
 
 var ErrPreparing = errors.New("preparing CD audio reader")
 

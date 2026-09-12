@@ -42,7 +42,7 @@ func TestRealReaderSeeksCDImageWithoutReopening(t *testing.T) {
 	if !strings.Contains(err.Error(), "expected 0..151, reader reported 0..150") {
 		t.Fatalf("missing track boundary diagnostic: %v", err)
 	}
-	for _, speed := range []int{0, 4} {
+	for _, speed := range []int{0, DefaultReadSpeed, 4} {
 		for _, verify := range []bool{false, true} {
 			r, err := ReaderWithOptions(verify, speed)(ctx, cue, []Layout{{1, 0, 150}, {2, 150, 300}})
 			if err != nil {

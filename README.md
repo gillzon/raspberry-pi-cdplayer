@@ -898,17 +898,15 @@ The updater runs `cdplayer -check-audio` before replacing the installed binary.
 This checks the runtime libraries without opening the drive. For a foreground
 run: `go run ./cmd/cdplayer -mpd 127.0.0.1:6600` (stop the boot service first).
 
-To experiment with a lower reading speed, add `-cd-speed 4` for a 4× request.
-Without a flag, `-cd-speed 0` leaves speed selection to the drive. The supplied
-boot services use this default; `bash scripts/update.sh` removes the earlier
-4× restriction for subsequent starts and reboots. After using a speed cap,
-power-cycle the optical drive once to clear any speed setting retained by its
-firmware. This option
-applies to cached audio only, after libcdio opens and initializes the drive.
-The helper logs whether the request was accepted or rejected; acceptance does
-not measure actual speed or current. It cannot control the initial spin-up
-acceleration or guarantee operation within the Pi's USB power budget. A lower
-speed can also slow cache filling. A foreground test does not change the service.
+Cached playback requests **2× CD speed by default**, including in the supplied
+boot services. This keeps background caching quieter while leaving headroom
+above real-time playback. Cache filling takes longer than at full drive speed.
+Use `-cd-speed 1` to request the lowest speed (with less headroom for read delays),
+or `-cd-speed 0` to leave speed selection to the drive.
+The option applies after libcdio opens and initializes the drive. The helper
+logs whether the request was accepted or rejected; some drives ignore or clamp
+low-speed requests, so actual noise and speed depend on the hardware. Initial
+spin-up and drive initialization can still be audible.
 
 - One helper owns the digital audio-reading session and seeks within that
   session instead of reopening the drive for each MPD track URL. By default,
@@ -920,10 +918,11 @@ speed can also slow cache filling. A foreground test does not change the service
   the app starts after the first audio block, not after caching a whole track.
   That first block wakes the player immediately instead of waiting for its
   next polling tick. Logs report reader-open time and first-block read time
-  separately. The “determine drive endianness” message is the audio library
+  separately. Default insertion polling is 250ms; slow physical probes still
+  back off to avoid competing with audio reads. The “determine drive endianness” message is the audio library
   checking sample byte order, not Linux detecting speed or mounting the CD.
   Album artwork lookup runs separately and does not delay playback.
-- Audio is cached in one-second blocks and playback starts before the whole
+- Audio is cached in 200ms blocks and playback starts before the whole
   track is cached. The reader stays on the selected track until it is fully
   cached, then reads following tracks. It does not seek away to prepare nearby
   track intros while the selected track is incomplete. Manual track selection

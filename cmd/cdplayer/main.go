@@ -40,9 +40,9 @@ func main() {
 	checkAudio := flag.Bool("check-audio", false, "check persistent CD reader dependencies without opening the drive")
 	cachedAudio := flag.Bool("audio-cache", true, "read CD once in the background and serve cached WAV audio to local MPD")
 	verifyAudio := flag.Bool("audio-verify", false, "enable slower software audio verification and repair for difficult discs")
-	cdSpeed := flag.Int("cd-speed", 0, "request CD read speed multiplier for cached audio, e.g. 4 (0 leaves drive default; not a current limit)")
+	cdSpeed := flag.Int("cd-speed", audio.DefaultReadSpeed, "request CD read speed multiplier for cached audio (default 2 for quiet playback; 0 leaves drive default)")
 	autoDevice := flag.Bool("mpd-auto-device", false, "let MPD select the CD drive (single-drive workaround for Bad track number)")
-	poll := flag.Duration("poll", time.Second, "disc polling interval")
+	poll := flag.Duration("poll", 250*time.Millisecond, "disc polling interval")
 	httpAddress := flag.String("http", ":8080", "web interface address (empty disables it)")
 	defaultCache := ""
 	if path, err := os.UserCacheDir(); err == nil {

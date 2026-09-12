@@ -207,8 +207,8 @@ func TestContinuousTrackReadAndManualSelection(t *testing.T) {
 	}
 	// Read all 120 seconds sequentially, including past the former 30s
 	// cutoff. No adjacent-track seek may interrupt continuous playback.
-	for n := 0; n < 120; n++ {
-		check(n * 75)
+	for n := 0; n < 9000/blockSectors; n++ {
+		check(n * blockSectors)
 	}
 	if got := nextRead(t, r); got.sector != 9000 {
 		t.Fatalf("next track not cached after current: %+v", got)
@@ -225,16 +225,16 @@ func TestContinuousTrackReadAndManualSelection(t *testing.T) {
 	// A pending request from the old stream must not cause a seek back
 	// after priming the new track's first two blocks.
 	for n := 0; n < 40; n++ {
-		check(18000 + n*75)
+		check(18000 + n*blockSectors)
 	}
-	if got := nextRead(t, r); got.sector != 18000+40*75 {
+	if got := nextRead(t, r); got.sector != 18000+40*blockSectors {
 		t.Fatalf("new track interrupted: %+v", got)
 	}
 	s.mu.Lock()
 	s.demand[s.tracks[2]] = 80
 	s.mu.Unlock()
 	r.allow <- struct{}{}
-	if got := nextRead(t, r); got.sector != 18000+80*75 {
+	if got := nextRead(t, r); got.sector != 18000+80*blockSectors {
 		t.Fatalf("selected stream demand ignored: %+v", got)
 	}
 }
@@ -259,7 +259,9 @@ func TestFirstAudioWakesPlayerOnlyAfterDataIsReady(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.Shutdown()
-	nextRead(t, r)
+	if got := nextRead(t, r); got.sector != 0 || got.count > 15 {
+		t.Fatalf("startup waits for more than 200ms of audio: %+v", got)
+	}
 	select {
 	case <-wake:
 		t.Fatal("notified before audio read")
@@ -284,5 +286,27 @@ func TestFirstAudioWakesPlayerOnlyAfterDataIsReady(t *testing.T) {
 	case <-wake:
 		t.Fatal("repeated startup notification")
 	default:
+	}
+}
+
+func TestShortFinalBlockServesExactTrackLength(t *testing.T) {
+	r := &fakeReader{calls: make(chan readCall, 2), allow: make(chan struct{}, 2)}
+	c := &Cache{Root: t.TempDir(), BaseURL: "http://localhost", Open: func(ctx context.Context, _ string, _ []Layout) (Reader, error) { r.ctx = ctx; return r, nil }}
+	if err := c.Observe("short", "/dev/fake", []Layout{{1, 0, 17}}); err != nil {
+		t.Fatal(err)
+	}
+	defer c.Shutdown()
+	for _, want := range []readCall{{0, 15}, {15, 2}} {
+		if got := nextRead(t, r); got != want {
+			t.Fatalf("read %+v, want %+v", got, want)
+		}
+		r.allow <- struct{}{}
+	}
+	response := httptest.NewRecorder()
+	c.ServeHTTP(response, httptest.NewRequest("GET", c.TrackURL(1), nil))
+	want := append(wavHeader(17*sectorBytes), make([]byte, 15*sectorBytes)...)
+	want = append(want, bytes.Repeat([]byte{15}, 2*sectorBytes)...)
+	if response.Code != 200 || !bytes.Equal(response.Body.Bytes(), want) {
+		t.Fatalf("incomplete or padded audio: status=%d bytes=%d", response.Code, response.Body.Len())
 	}
 }
