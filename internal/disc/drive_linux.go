@@ -19,6 +19,8 @@ type Drive struct {
 	cache  tocCache
 }
 
+func (d *Drive) InvalidateTOC() { d.cache = tocCache{} }
+
 // Eject opens the configured tray after MPD has released its audio reader.
 func (d *Drive) Eject() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -45,7 +47,9 @@ func (d *Drive) Read() (Disc, error) {
 		d.cache = tocCache{}
 		return Disc{}, fmt.Errorf("drive status: %w", errno)
 	}
-	return d.cache.read(int(status), func() (Disc, error) { return readTOC(fd) })
+	// Ready status alone cannot detect a swap that completed between polls.
+	changed, _, changeErr := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), 0x5325, 0x7fffffff) // CDROM_MEDIA_CHANGED, CDSL_CURRENT
+	return d.cache.readMedia(int(status), changeErr == 0 && changed == 1, func() (Disc, error) { return readTOC(fd) })
 }
 
 func readTOC(fd int) (Disc, error) {

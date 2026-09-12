@@ -15,6 +15,8 @@ type AutoDrive struct {
 	detect   func() (string, error)
 }
 
+func (d *AutoDrive) InvalidateTOC() { d.drive.InvalidateTOC() }
+
 func (d *AutoDrive) DevicePath() string { return d.drive.Device }
 func (d *AutoDrive) Read() (Disc, error) {
 	detect := d.detect

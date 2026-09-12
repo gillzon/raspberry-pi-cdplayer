@@ -23,6 +23,8 @@ var readerProgram string
 // DefaultReadSpeed keeps the drive quiet with headroom above real-time playback.
 const DefaultReadSpeed = 2
 
+var ErrLayoutMismatch = errors.New("CD track layout changed")
+
 type Layout struct {
 	Number int `json:"number"`
 	Start  int `json:"start"`
@@ -118,7 +120,11 @@ func openReaderProgram(ctx context.Context, device string, layout []Layout, prog
 			return nil, fmt.Errorf("open persistent CD reader: startup cancelled or exceeded 30s: %v; %s", contextErr, reason)
 		}
 		if exitErr != nil {
-			return nil, fmt.Errorf("open persistent CD reader: %v; %s", exitErr, reason)
+			err := fmt.Errorf("open persistent CD reader: %v; %s", exitErr, reason)
+			if strings.Contains(reason, " layout mismatch:") {
+				return nil, fmt.Errorf("%w: %w", ErrLayoutMismatch, err)
+			}
+			return nil, err
 		}
 		return nil, fmt.Errorf("open persistent CD reader: invalid greeting %q (%v); %s", greeting, err, reason)
 	}

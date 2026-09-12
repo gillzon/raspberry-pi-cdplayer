@@ -11,3 +11,5 @@ func (d Drive) Eject() error { return fmt.Errorf("disc eject requires supported 
 func (d Drive) Read() (Disc, error) {
 	return Disc{}, fmt.Errorf("CD detection requires Linux on amd64, arm64, arm, or 386")
 }
+
+func (d *Drive) InvalidateTOC() {}

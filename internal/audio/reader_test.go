@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"math"
 	"os"
 	"os/exec"
@@ -39,7 +40,7 @@ func TestRealReaderSeeksCDImageWithoutReopening(t *testing.T) {
 		bad.Close()
 		t.Fatal("accepted a changed disc layout")
 	}
-	if !strings.Contains(err.Error(), "expected 0..151, reader reported 0..150") {
+	if !errors.Is(err, ErrLayoutMismatch) || !strings.Contains(err.Error(), "expected 0..151, reader reported 0..150") {
 		t.Fatalf("missing track boundary diagnostic: %v", err)
 	}
 	for _, speed := range []int{0, DefaultReadSpeed, 4} {

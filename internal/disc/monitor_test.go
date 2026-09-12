@@ -114,3 +114,105 @@ func TestSlowProbeDoesNotImmediatelyRepeat(t *testing.T) {
 		t.Fatal("polling did not resume")
 	}
 }
+
+// The physical worker owns both invalidation and probing.
+type refreshableProbe struct {
+	controlledProbe
+	invalidated chan struct{}
+}
+
+func (d *refreshableProbe) InvalidateTOC() { d.invalidated <- struct{}{} }
+
+func TestRefreshDuringProbeDiscardsOldSnapshot(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	d := &refreshableProbe{controlledProbe: controlledProbe{starts: make(chan struct{}, 2), release: make(chan struct{}, 2), ctx: ctx}, invalidated: make(chan struct{}, 1)}
+	m := NewMonitor(ctx, d, time.Hour)
+	<-d.starts
+	m.Refresh()
+	d.release <- struct{}{}
+	select {
+	case <-d.invalidated:
+	case <-time.After(time.Second):
+		t.Fatal("refresh waited for the polling timer")
+	}
+	<-d.starts
+	if _, err := m.Read(); err == nil {
+		t.Fatal("old in-flight probe overwrote refresh status")
+	}
+	d.release <- struct{}{}
+	select {
+	case <-m.Updates:
+	case <-time.After(time.Second):
+		t.Fatal("fresh probe did not wake player")
+	}
+	if got, err := m.Read(); err != nil || got.ID != "disc" {
+		t.Fatalf("refresh failed: %+v %v", got, err)
+	}
+}
+
+type ejectableProbe struct {
+	mu   sync.Mutex
+	disc Disc
+}
+
+func (d *ejectableProbe) Read() (Disc, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.disc, nil
+}
+func (d *ejectableProbe) Eject() error       { return nil }
+func (d *ejectableProbe) DevicePath() string { return "/dev/fake" }
+
+func TestEjectNotifiesRemovalAndSuppressesStaleTOC(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	album := Disc{ID: "album", Tracks: []int{1}}
+	d := &ejectableProbe{disc: album}
+	m := NewMonitor(ctx, d, time.Hour)
+	waitUpdate := func() {
+		t.Helper()
+		select {
+		case <-m.Updates:
+		case <-time.After(time.Second):
+			t.Fatal("missing monitor update")
+		}
+	}
+	waitUpdate()
+	removed := make(chan struct{}, 1)
+	m.SetObserver(func(d Disc, err error) {
+		if err == nil && d.ID == "" {
+			select {
+			case removed <- struct{}{}:
+			default:
+			}
+		}
+	})
+	if err := m.Eject(); err != nil {
+		t.Fatal(err)
+	}
+	waitUpdate()
+	select {
+	case <-removed:
+	default:
+		t.Fatal("eject did not invalidate cached audio")
+	}
+	for _, tc := range []struct {
+		physical Disc
+		want     string
+	}{
+		{album, ""}, // Firmware still reports the old TOC as the tray opens.
+		{album, ""},
+		{Disc{}, ""},
+		{album, "album"}, // The same album can play after a real reinsertion.
+	} {
+		d.mu.Lock()
+		d.disc = tc.physical
+		d.mu.Unlock()
+		m.Refresh()
+		waitUpdate()
+		if got, err := m.Read(); err != nil || got.ID != tc.want {
+			t.Fatalf("disc after eject: %+v %v, want %q", got, err, tc.want)
+		}
+	}
+}

@@ -25,14 +25,24 @@ before the full track is cached; no internet or mounted CD filesystem is needed.
 Cached playback waits for the reader to validate the disc layout and produce
 audio before queuing tracks. If startup fails, the UI reports the helper's
 diagnostic and exit status. A `layout mismatch` includes the track number and
-expected/actual sector boundaries; include that full message when reporting it.
+expected/actual sector boundaries. The player refreshes the TOC and retries once
+for that disc; a persistent mismatch remains an error rather than playing with
+incorrect track lengths. Include the full message when reporting it.
 
 Spin-up and table-of-contents reading add hardware-dependent delay. There is no
-fixed insertion-to-sound guarantee yet. A removal/reinsertion entirely between
-polls can be missed. The table of contents is cached while the drive remains
-ready, so routine polls only check drive status instead of reading every track
-again during audio extraction. Removal, disconnection, or a not-ready state
-invalidates the cache.
+fixed insertion-to-sound guarantee yet. The table of contents is cached while
+the drive remains ready. Routine polls check drive status and Linux's
+[media-change flag](https://docs.kernel.org/userspace-api/ioctl/cdrom.html)
+instead of reading every track again during audio extraction. A reported media
+change, removal, disconnection, or not-ready state invalidates the cache.
+Drives that do not support the media-change query fall back to status detection;
+a removal/reinsertion entirely between polls can still be missed on those drives.
+
+Eject stops CD playback and disc caching, then waits for an inserted audio CD.
+The physical drive button is handled when polling detects the tray opening or
+becoming not-ready; the on-screen Eject stops playback before opening the tray.
+A briefly stale TOC after on-screen eject is ignored until the drive reports
+removal or a different disc. Reinserting the same album also starts it again.
 
 Drive polling waits after each completed probe rather than catching up on
 missed ticks. Slow probes increase that wait to twice their duration, capped

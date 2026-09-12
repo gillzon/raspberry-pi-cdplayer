@@ -19,6 +19,8 @@ type Monitor struct {
 	path         string
 	probeStarted time.Time
 	eject        chan ejectRequest
+	refresh      chan struct{}
+	generation   uint64
 	ctx          context.Context
 }
 type ejectRequest struct {
@@ -32,14 +34,23 @@ type monitoredDrive interface {
 }
 
 func NewMonitor(ctx context.Context, d monitoredDrive, interval time.Duration) *Monitor {
-	m := &Monitor{Updates: make(chan struct{}, 1), ctx: ctx, err: fmt.Errorf("detecting CD drive"), eject: make(chan ejectRequest)}
+	m := &Monitor{Updates: make(chan struct{}, 1), ctx: ctx, err: fmt.Errorf("detecting CD drive"), eject: make(chan ejectRequest), refresh: make(chan struct{}, 1)}
 	go func() {
+		ejectedID := ""
 		sample := func() time.Duration {
 			started := time.Now()
 			m.mu.Lock()
 			m.probeStarted = started
+			generation := m.generation
 			m.mu.Unlock()
 			v, err := d.Read()
+			if err == nil && ejectedID != "" {
+				if v.ID == ejectedID {
+					v = Disc{} // The tray can briefly keep reporting the ejected TOC.
+				} else {
+					ejectedID = ""
+				}
+			}
 			path := d.DevicePath()
 			duration := time.Since(started)
 			delay := probeDelay(interval, duration)
@@ -48,6 +59,10 @@ func NewMonitor(ctx context.Context, d monitoredDrive, interval time.Duration) *
 			}
 			m.mu.Lock()
 			m.probeStarted = time.Time{}
+			if generation != m.generation {
+				m.mu.Unlock()
+				return delay // A refresh requested during this probe supersedes it.
+			}
 			changed := m.disc.ID != v.ID || m.path != path || fmt.Sprint(m.err) != fmt.Sprint(err)
 			m.disc, m.err, m.path = v, err, path
 			observer := m.observer
@@ -73,6 +88,11 @@ func NewMonitor(ctx context.Context, d monitoredDrive, interval time.Duration) *
 				return
 			case <-timer.C:
 				timer.Reset(sample())
+			case <-m.refresh:
+				if invalidator, ok := d.(interface{ InvalidateTOC() }); ok {
+					invalidator.InvalidateTOC()
+				}
+				timer.Reset(sample())
 			case r := <-m.eject:
 				err := r.ctx.Err()
 				if err == nil {
@@ -80,9 +100,18 @@ func NewMonitor(ctx context.Context, d monitoredDrive, interval time.Duration) *
 				}
 				if err == nil {
 					m.mu.Lock()
+					ejectedID = m.disc.ID
 					m.disc = Disc{}
 					m.err = nil
+					observer := m.observer
 					m.mu.Unlock()
+					if observer != nil {
+						observer(Disc{}, nil)
+					}
+					select {
+					case m.Updates <- struct{}{}:
+					default:
+					}
 				}
 				r.done <- err
 			}
@@ -124,3 +153,16 @@ func (m *Monitor) Eject() error {
 
 // SetObserver installs a nonblocking media-change notification before playback.
 func (m *Monitor) SetObserver(f func(Disc, error)) { m.mu.Lock(); m.observer = f; m.mu.Unlock() }
+
+// Refresh discards the cached TOC on the drive worker. Hide the old snapshot
+// until a fresh physical probe completes, without blocking controls on I/O.
+func (m *Monitor) Refresh() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.err = fmt.Errorf("refreshing CD table of contents")
+	m.generation++
+	select {
+	case m.refresh <- struct{}{}:
+	default:
+	}
+}

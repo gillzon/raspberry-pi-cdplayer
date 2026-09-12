@@ -45,3 +45,43 @@ func TestFailedTOCReadIsRetried(t *testing.T) {
 		t.Fatalf("failed to recover: %+v %v", d, err)
 	}
 }
+
+func TestMediaChangeReloadsTOCWhileDriveStaysReady(t *testing.T) {
+	var cache tocCache
+	old := Disc{ID: "old", Layout: []TrackLayout{{1, 0, 19286}}}
+	replacement := Disc{ID: "new", Layout: []TrackLayout{{1, 0, 24089}}}
+	if _, err := cache.readMedia(4, false, func() (Disc, error) { return old, nil }); err != nil {
+		t.Fatal(err)
+	}
+	got, err := cache.readMedia(4, true, func() (Disc, error) { return replacement, nil })
+	if err != nil || got.ID != "new" || got.Layout[0].End != 24089 {
+		t.Fatalf("retained stale TOC after media change: %+v %v", got, err)
+	}
+	_, err = cache.readMedia(4, false, func() (Disc, error) {
+		t.Fatal("unchanged disc reloaded")
+		return Disc{}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPhysicalEjectPublishesNoPlayableDisc(t *testing.T) {
+	var cache tocCache
+	load := func() (Disc, error) { return Disc{ID: "album", Tracks: []int{1}}, nil }
+	if _, err := cache.read(4, load); err != nil {
+		t.Fatal(err)
+	}
+	for _, status := range []int{3, 2, 1, 1} {
+		got, err := cache.read(status, func() (Disc, error) {
+			t.Fatal("read TOC with tray moving or empty")
+			return Disc{}, nil
+		})
+		if err != nil || got.ID != "" || len(got.Tracks) != 0 {
+			t.Fatalf("status %d retained playback or hid removal behind error: %+v %v", status, got, err)
+		}
+	}
+	if got, err := cache.read(4, load); err != nil || got.ID != "album" {
+		t.Fatalf("reinserted disc not available: %+v %v", got, err)
+	}
+}

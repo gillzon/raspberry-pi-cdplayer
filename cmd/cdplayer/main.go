@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -152,7 +153,11 @@ func main() {
 			}
 		}()
 		backend.TrackURL = audioCache.TrackURL
+		retriedDisc := ""
 		controller.Prepare = func(d disc.Disc) error {
+			if d.ID != retriedDisc {
+				retriedDisc = ""
+			}
 			layout := make([]audio.Layout, 0, len(d.Layout))
 			for _, t := range d.Layout {
 				layout = append(layout, audio.Layout{Number: t.Number, Start: t.Start, End: t.End})
@@ -160,7 +165,15 @@ func main() {
 			if err := audioCache.Observe(d.ID, drive.DevicePath(), layout); err != nil {
 				return err
 			}
-			return audioCache.Ready()
+			err := audioCache.Ready()
+			if errors.Is(err, audio.ErrLayoutMismatch) && retriedDisc != d.ID {
+				retriedDisc = d.ID
+				slog.Warn("CD layout changed; refreshing TOC and retrying once", "error", err)
+				drive.Refresh()
+				audioCache.Close()
+				return audio.ErrPreparing
+			}
+			return err
 		}
 		controller.Release = audioCache.Close
 		drive.SetObserver(func(d disc.Disc, err error) {
