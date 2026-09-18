@@ -1,10 +1,10 @@
 # Raspberry Pi CD player
 
 Insert an audio CD and play it automatically on a Raspberry Pi 4.
-Go detects discs using Linux CD-ROM ioctls. One background libcdio reader keeps
-the drive open, reads ahead into a temporary WAV cache, and serves audio to
-Music Player Daemon (MPD) over localhost. MPD sends it to ALSA. Playback starts
-before the full track is cached; no internet or mounted CD filesystem is needed.
+Go detects discs using Linux CD-ROM ioctls and queues its audio tracks in Music
+Player Daemon (MPD), which reads the CD directly and sends it to ALSA. No CD
+filesystem is mounted and no helper, HTTP audio server, or background cache is
+used in the default configuration.
 
 ## Behavior
 
@@ -19,15 +19,12 @@ before the full track is cached; no internet or mounted CD filesystem is needed.
 - Preserve manual pause/stop and stop at the end of the album without looping.
 - Report asynchronous playback failures, such as read errors or unavailable audio
   output. These do not trigger an endless restart loop; fix the cause and use
-  Play in the web UI, reinsert the disc, or restart the service. Web Play also
-  retries a failed audio-cache reader.
+  Play in the web UI, reinsert the disc, or restart the service. When the
+  optional audio cache is enabled, Web Play also retries its reader.
 
-Cached playback waits for the reader to validate the disc layout and produce
-audio before queuing tracks. If startup fails, the UI reports the helper's
-diagnostic and exit status. A `layout mismatch` includes the track number and
-expected/actual sector boundaries. The player refreshes the TOC and retries once
-for that disc; a persistent mismatch remains an error rather than playing with
-incorrect track lengths. Include the full message when reporting it.
+For drives that benefit from read-ahead, the optional `-audio-cache` mode adds a
+persistent libcdio reader and temporary WAV cache. It is disabled by default so
+normal playback has only one CD reader: MPD.
 
 Spin-up and table-of-contents reading add hardware-dependent delay. There is no
 fixed insertion-to-sound guarantee yet. The table of contents is cached while
@@ -224,18 +221,17 @@ Sources: [MusicBrainz disc IDs](https://musicbrainz.org/doc/Disc_ID_Calculation)
 
 ```sh
 sudo apt update
-sudo apt install mpd mpc eject alsa-utils python3 python3-mutagen cd-paranoia
+sudo apt install mpd mpc eject alsa-utils python3 python3-mutagen
 mpd --version
 ls -l /dev/sr*
 aplay -l
 ```
 
-In `mpd --version`, confirm HTTP input and WAV decoding support for cached
-playback. The `cd-paranoia` package supplies the libcdio CDDA/paranoia libraries;
-the app's embedded Python helper loads them using the standard-library `ctypes`
-module (no pip dependencies or C compiler needed). `-device auto` selects the
-single optical drive. The older `-audio-cache=false` path requires MPD's
-**cdio_paranoia** input plugin instead.
+In `mpd --version`, confirm the **cdio_paranoia** input plugin is available for
+direct CD playback. `-device auto` selects the single optical drive. The
+`cd-paranoia` package is only required for the optional `-audio-cache` mode;
+its embedded Python helper loads the libcdio libraries using the standard
+library `ctypes` module (no pip dependencies or C compiler needed).
 
 The app defaults to the system MPD on **127.0.0.1:6600**, matching
 `scripts/update.sh`. The optional dedicated setup below uses its own MPD
@@ -898,22 +894,32 @@ cancelled it. The UI shows a waiting indication while a command is pending.
 This accommodates slow acknowledgements; it does not speed up disc reading.
 
 
-## Persistent CD reader and background audio cache
+## Optional persistent CD reader and background audio cache
 
-Cached playback is enabled by default. Update the Pi with:
+Direct MPD playback is the default. Enable this advanced mode only for a drive
+that is proven to benefit from it:
 
 ```sh
-sudo apt install python3 cd-paranoia
-bash scripts/update.sh
+sudo apt install cd-paranoia
+sudo systemctl edit cdplayer
 ```
 
-The updater runs `cdplayer -check-audio` before replacing the installed binary.
-This checks the runtime libraries without opening the drive. For a foreground
-run: `go run ./cmd/cdplayer -mpd 127.0.0.1:6600` (stop the boot service first).
+For the supplied system-MPD service, add this override, then reload and restart
+the service:
 
-Cached playback requests **2× CD speed by default**, including in the supplied
-boot services. This keeps background caching quieter while leaving headroom
-above real-time playback. Cache filling takes longer than at full drive speed.
+```ini
+[Service]
+ExecStart=
+ExecStart=/usr/local/bin/cdplayer -device auto -mpd 127.0.0.1:6600 -mpd-auto-device -audio-cache
+```
+
+For a foreground run, use `go run ./cmd/cdplayer -mpd 127.0.0.1:6600 -audio-cache`
+(stop the boot service first). `cdplayer -check-audio` checks the optional
+reader dependencies without opening the drive.
+
+When enabled, cached playback requests **2× CD speed by default**. This keeps
+background caching quieter while leaving headroom above real-time playback.
+Cache filling takes longer than at full drive speed.
 Use `-cd-speed 1` to request the lowest speed (with less headroom for read delays),
 or `-cd-speed 0` to leave speed selection to the drive.
 The option applies after libcdio opens and initializes the drive. The helper
@@ -931,7 +937,7 @@ spin-up and drive initialization can still be audible.
   the app starts after the first audio block, not after caching a whole track.
   That first block wakes the player immediately instead of waiting for its
   next polling tick. Logs report reader-open time and first-block read time
-  separately. Default insertion polling is 250ms; slow physical probes still
+  separately. Default insertion polling is one second; slow physical probes still
   back off to avoid competing with audio reads. The “determine drive endianness” message is the audio library
   checking sample byte order, not Linux detecting speed or mounting the CD.
   Album artwork lookup runs separately and does not delay playback.
@@ -972,7 +978,7 @@ a generated BIN/CUE audio disc image when the runtime libraries are installed,
 as well as streaming, cancellation, and queue prioritization with simulated
 readers. Raspberry Pi optical-drive/audio testing is still required.
 
-To compare with the old path or use a remote MPD:
+To use the normal direct-MPD path explicitly or use a remote MPD:
 
 ```sh
 go run ./cmd/cdplayer -mpd 127.0.0.1:6600 -audio-cache=false -mpd-auto-device

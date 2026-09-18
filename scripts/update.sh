@@ -56,7 +56,6 @@ echo "Building and testing $(git rev-parse --short HEAD)…"
 go test ./...
 python3 -m unittest discover -s internal/library -p '*_test.py'
 go build -trimpath -o "$build_dir/cdplayer" ./cmd/cdplayer
-"$build_dir/cdplayer" -check-audio
 cp deploy/cdplayer-system-mpd.service "$build_dir/cdplayer.service"
 
 # Fetch and compile as the checkout owner; privilege is only needed to install.
