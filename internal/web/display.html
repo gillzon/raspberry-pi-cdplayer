@@ -42,7 +42,7 @@ button:focus-visible{outline:2px solid #0a0a0a;outline-offset:-4px}
 .timeline time{max-width:65%;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
 [hidden]{display:none!important}
 </style>
-<header><button id="mode" title="Change playback mode" aria-label="Change playback mode"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h15m-4-4 4 4-4 4M20 17H5m4-4-4 4 4 4"/></svg></button><div class="source-info"><span id="source">PLAYER</span><span id="status" role="status">Connecting…</span></div><time id="clock" aria-label="Current local time"></time><button id="sleep" title="Sleep screen" aria-label="Sleep screen"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 15.5A8.5 8.5 0 0 1 8.5 4 8.5 8.5 0 1 0 20 15.5Z"/></svg></button></header>
+<header><button id="mode" title="Change playback mode" aria-label="Change playback mode"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h15m-4-4 4 4-4 4M20 17H5m4-4-4 4 4 4"/></svg></button><div class="source-info"><span id="source">PLAYER</span><span id="status" role="status">Connecting…</span></div><time id="clock" aria-label="Current local time"></time><button id="sleep" title="Sleep player" aria-label="Sleep player"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 15.5A8.5 8.5 0 0 1 8.5 4 8.5 8.5 0 1 0 20 15.5Z"/></svg></button></header>
 <main><div class="art"><img id="cover" alt="Album cover" hidden><span id="placeholder">♫</span></div><div class="text"><h1 id="title">Waiting for player</h1><p id="artist"></p><p id="album"></p></div></main>
 <div class="timeline"><progress id="progress" value="0" max="1" aria-label="Song progress"></progress><time id="songTime">0:00 / —</time></div>
 <p id="message" role="status"></p>
@@ -67,10 +67,11 @@ function render(s){
  const position=selecting?tracks.indexOf(s.selection.track):(m.song===undefined?-1:Number(m.song)),track=tracks[position],song=meta.tracks?.[track]||{};
  const stale=(!s.updated||Date.now()-Date.parse(s.updated)>5000)&&!selecting;
  navigation.update(s.disc?.ID,tracks,position);if(stale||spotify||idle||usb||radio)navigation.cancel();
- $('source').textContent=radio?'Radio · '+(s.radio?.name||'Live'):usb?'USB Music':spotify?'Spotify':idle?'CD · ready':cd?'CD':'Player';
+ $('source').textContent=radio?'Radio · '+(s.radio?.name||'Live'):usb?'USB Music':spotify?'Spotify':idle?'Idle':cd?'CD':'Player';
  $('source').title=$('source').textContent+' · Change playback mode';
  $('source').setAttribute('aria-label',$('source').title);
- $('status').textContent=selecting?'Changing track…':busy?'Please wait…':stale?'Status delayed':idle?'Stopped':spotify?({playing:'Playing',paused:'Paused',loading:'Loading',connected:'Connected',stopped:'Stopped'}[sp.playback]||'Connected'):({play:'Playing',pause:'Paused',stop:'Stopped'}[m.state]||'Waiting');
+ const playbackStatus=selecting?'Changing track…':busy?'Please wait…':stale?'Status delayed':idle?'Stopped':spotify?({playing:'Playing',paused:'Paused',loading:'Loading',connected:'Connected',stopped:'Stopped'}[sp.playback]||'Connected'):({play:'Playing',pause:'Paused',stop:'Stopped'}[m.state]||'Waiting');
+ $('status').textContent=playbackStatus+' · '+(s.network||'Offline');
  $('title').textContent=radio?(s.radio?.name||'Internet Radio'):usb?(s.usb?.title||'Press Play for USB mix'):spotify?(sp.now?.title||'Spotify Connect'):idle?'Press Play for CD':!cd?'Waiting for playback source':song.title||(track?'Track '+track:tracks.length?'Audio CD':'Insert a CD');
  $('artist').textContent=radio?'Swedish radio':usb?(s.usb?.artist||''):spotify?(sp.now?.artist||''):cd?(song.artist||meta.artist||''):'';
  $('album').textContent=radio?'Live broadcast':usb?(s.usb?.album||''):spotify?(sp.now?.album||''):cd?(meta.album||''):'';
@@ -88,7 +89,7 @@ function render(s){
  $('progress').setAttribute('aria-valuetext',duration(played)+(total?' of '+duration(total):' elapsed; duration unknown'));
  for(const action of buttons)$(action).disabled=busy||stale||(action!=='shuffle'&&(spotify||(!usb&&!radio&&(idle?action!=='play':!tracks.length))));
  $('mode').disabled=busy||stale;
- $('sleep').disabled=busy||stale;setIcon('sleep',s.screen_asleep?'wake':'sleep',s.screen_asleep?'Wake screen':'Sleep screen');
+ $('sleep').disabled=busy||stale;setIcon('sleep',s.screen_asleep?'wake':'sleep',s.screen_asleep?'Wake screen':'Sleep player');
  setIcon('pause',radio?'stop':'pause',radio?'Stop radio':'Pause');
  for(const id of ['next','previous'])setIcon(id,id,(id==='next'?'Next':'Previous')+(radio?' station':' track'));
  // The installed local boot page keeps its logo visible until this first render.

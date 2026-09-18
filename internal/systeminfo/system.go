@@ -22,6 +22,7 @@ type Info struct {
 	MemoryTotal  *uint64   `json:"memory_total"`
 	MemoryUsed   *uint64   `json:"memory_used"`
 	Uptime       *float64  `json:"uptime_seconds"`
+	Network      string    `json:"network"`
 	Updated      time.Time `json:"updated"`
 }
 
@@ -62,7 +63,7 @@ func (m *Monitor) read(path string) string {
 
 func (m *Monitor) sample() {
 	hostname, _ := os.Hostname()
-	info := Info{Hostname: hostname, Model: m.read("proc/device-tree/model"), Architecture: runtime.GOARCH, CPUs: runtime.NumCPU(), Updated: time.Now()}
+	info := Info{Hostname: hostname, Model: m.read("proc/device-tree/model"), Architecture: runtime.GOARCH, CPUs: runtime.NumCPU(), Network: activeNetwork(m.read("proc/net/route")), Updated: time.Now()}
 	if total, idle, ok := cpuCounters(m.read("proc/stat")); ok {
 		if m.hasPrevious && total > m.previousTotal && idle >= m.previousIdle && idle-m.previousIdle <= total-m.previousTotal {
 			usage := 100 * float64((total-m.previousTotal)-(idle-m.previousIdle)) / float64(total-m.previousTotal)
@@ -113,6 +114,36 @@ func (m *Monitor) sample() {
 	m.mu.Lock()
 	m.info = info
 	m.mu.Unlock()
+}
+
+// activeNetwork returns the interface type used by the lowest-metric IPv4
+// default route. It describes the network preferred for traffic, rather than
+// merely an interface that happens to be associated.
+func activeNetwork(routes string) string {
+	bestMetric := -1
+	bestDevice := ""
+	for _, line := range strings.Split(routes, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 8 || fields[1] != "00000000" {
+			continue
+		}
+		flags, flagErr := strconv.ParseUint(fields[3], 16, 64)
+		metric, metricErr := strconv.Atoi(fields[6])
+		if flagErr != nil || metricErr != nil || flags&1 == 0 || (bestMetric >= 0 && metric >= bestMetric) {
+			continue
+		}
+		bestMetric, bestDevice = metric, fields[0]
+	}
+	switch {
+	case strings.HasPrefix(bestDevice, "eth") || strings.HasPrefix(bestDevice, "en"):
+		return "Ethernet"
+	case strings.HasPrefix(bestDevice, "wl") || strings.HasPrefix(bestDevice, "wifi"):
+		return "Wi-Fi"
+	case bestDevice == "":
+		return "Offline"
+	default:
+		return bestDevice
+	}
 }
 
 func cpuCounters(input string) (total, idle uint64, ok bool) {

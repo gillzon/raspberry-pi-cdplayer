@@ -34,11 +34,29 @@ type Controller struct {
 	spotifyStopped bool
 	queueCheck     bool
 	spotifyIdle    bool
+	idle           bool
+	idleStopped    bool
 }
 
 // Step is called immediately at startup and periodically thereafter. Failed
 // reads preserve the current session; failed queue changes are retried.
 func (c *Controller) Step(ctx context.Context) error {
+	if c.idle {
+		fresh, err := c.Backend.Connect(ctx)
+		if err != nil {
+			return err
+		}
+		if fresh {
+			c.idleStopped = false
+		}
+		if !c.idleStopped {
+			if err := c.Backend.Clear(); err != nil {
+				return err
+			}
+			c.idleStopped = true
+		}
+		return nil
+	}
 	if c.usb || c.radio {
 		if _, err := c.Backend.Connect(ctx); err != nil {
 			return err
@@ -155,6 +173,7 @@ func (c *Controller) Eject() error {
 // UseSpotify suppresses autoplay even if stopping MPD fails. The caller must
 // keep the Spotify sink gated until this returns successfully.
 func (c *Controller) UseSpotify(ctx context.Context) error {
+	c.idle = false
 	c.radio = false
 	c.usb = false
 	c.spotify = true
@@ -187,6 +206,7 @@ func (c *Controller) stopForSpotify() error {
 	return nil
 }
 func (c *Controller) UseCD() {
+	c.idle = false
 	c.radio = false
 	c.usb = false
 	c.spotify = false
@@ -196,6 +216,7 @@ func (c *Controller) UseCD() {
 
 // UseUSB suspends CD autoplay until the user explicitly selects CD again.
 func (c *Controller) UseUSB() {
+	c.idle = false
 	c.radio = false
 	c.usb = true
 	c.spotify = false
@@ -211,7 +232,22 @@ func (c *Controller) UseRadio() {
 	c.radio = true
 }
 
+// UseIdle stops all MPD sources and releases the CD reader. Polls, disc
+// insertion and MPD reconnects must not restart playback until a source is chosen.
+func (c *Controller) UseIdle(ctx context.Context) error {
+	c.idle, c.idleStopped = true, false
+	c.radio, c.usb, c.spotify = false, false, false
+	c.ready = false
+	if c.Release != nil {
+		c.Release()
+	}
+	return c.Step(ctx)
+}
+
 func (c *Controller) Source() string {
+	if c.idle {
+		return "idle"
+	}
 	if c.radio {
 		return "radio"
 	}

@@ -53,6 +53,7 @@ type State struct {
 	Selection      player.TrackSelection `json:"selection"`
 	Audio          audio.Status          `json:"audio"`
 	Source         string                `json:"source"`
+	Network        string                `json:"network"`
 	Spotify        spotify.State         `json:"spotify"`
 	Device         string                `json:"device"`
 	Disc           disc.Disc             `json:"disc"`

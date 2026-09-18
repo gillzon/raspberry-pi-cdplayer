@@ -230,7 +230,7 @@ func main() {
 
 			return nil
 		}
-		if cmd.Action == "play" || cmd.Action == "pause" || cmd.Action == "stop" || cmd.Action == "eject" || cmd.Action == "source-cd" || cmd.Action == "usb-play" || cmd.Action == "usb-mix" {
+		if cmd.Action == "screen-sleep" || cmd.Action == "screen-toggle" || cmd.Action == "play" || cmd.Action == "pause" || cmd.Action == "stop" || cmd.Action == "eject" || cmd.Action == "source-cd" || cmd.Action == "usb-play" || cmd.Action == "usb-mix" {
 			trackRequests.Cancel()
 		}
 		request := controlRequest{ctx: ctx, command: cmd, result: make(chan error, 1)}
@@ -288,7 +288,7 @@ func main() {
 		trackRequests.Update(controller.Disc().ID, controller.Disc().Tracks, controller.Source() == "cd")
 		albums.Observe(ctx, controller.Disc())
 		selectedDevice = drive.DevicePath()
-		state := web.State{ScreenAsleep: screenAsleep, Outputs: outputs, Source: controller.Source(), Spotify: receiver.State, Device: selectedDevice, Disc: controller.Disc(), MPD: backend.Status(), Updated: time.Now()}
+		state := web.State{ScreenAsleep: screenAsleep, Outputs: outputs, Source: controller.Source(), Network: monitor.Snapshot().Network, Spotify: receiver.State, Device: selectedDevice, Disc: controller.Disc(), MPD: backend.Status(), Updated: time.Now()}
 		if controller.Source() == "radio" {
 			station := selectedStation
 			state.Radio = &station
@@ -327,16 +327,22 @@ func main() {
 	}
 	handleControl := func(request controlRequest) error {
 		switch request.command.Action {
-		case "screen-sleep":
-			screenAsleep = true
-			publish(nil)
-			return nil
-		case "screen-wake":
-			screenAsleep = false
-			publish(nil)
-			return nil
-		case "screen-toggle":
-			screenAsleep = !screenAsleep
+		case "screen-sleep", "screen-wake", "screen-toggle":
+			if err := request.ctx.Err(); err != nil {
+				return err
+			}
+			sleep := request.command.Action == "screen-sleep" || (request.command.Action == "screen-toggle" && !screenAsleep)
+			if sleep {
+				trackRequests.Cancel()
+				// Attempt both stops even if either fails. Idle suppresses autoplay
+				// and retries stopping MPD after a connection failure.
+				err := errors.Join(receiver.Stop(), controller.UseIdle(request.ctx))
+				if err != nil {
+					publish(err)
+					return err
+				}
+			}
+			screenAsleep = sleep
 			publish(nil)
 			return nil
 		case "play", "toggle", "next", "previous", "source-next", "source-cd", "source-usb", "source-radio", "radio-play", "usb-play", "usb-mix", "source-spotify":

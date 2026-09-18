@@ -468,3 +468,98 @@ func TestRadioEjectKeepsStreamPlaying(t *testing.T) {
 		t.Fatal("eject interrupted radio")
 	}
 }
+
+func TestSleepStopsEverySourceAndWaitsForManualPlayback(t *testing.T) {
+	for _, source := range []string{"cd", "usb", "radio", "spotify"} {
+		t.Run(source, func(t *testing.T) {
+			ctx := context.Background()
+			b := &fakeBackend{}
+			d := &fakeDrive{disc: disc.Disc{ID: "album", Tracks: []int{1}}}
+			c := &Controller{Drive: d, Backend: b}
+			switch source {
+			case "usb":
+				c.UseUSB()
+			case "radio":
+				c.UseRadio()
+			case "spotify":
+				if err := c.UseSpotify(ctx); err != nil {
+					t.Fatal(err)
+				}
+			}
+			released := false
+			c.Release = func() { released = true }
+			before := b.clears
+			if err := c.UseIdle(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if c.Source() != "idle" || !released || b.clears != before+1 {
+				t.Fatal("sleep did not stop playback and release CD audio")
+			}
+			c.Prepare = func(disc.Disc) error { t.Fatal("prepared CD while idle"); return nil }
+			for _, inserted := range []disc.Disc{{}, {ID: "new", Tracks: []int{2}}, {ID: "album", Tracks: []int{1}}} {
+				d.disc = inserted
+				if err := c.Step(ctx); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if len(b.starts) != 0 || b.clears != before+1 {
+				t.Fatal("idle polls changed playback")
+			}
+			b.fresh = true
+			if err := c.Step(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if b.clears != before+2 || len(b.starts) != 0 {
+				t.Fatal("reconnect did not keep playback stopped")
+			}
+			c.Prepare = nil
+			c.UseCD()
+			if err := c.Step(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if c.Source() != "cd" || len(b.starts) != 1 {
+				t.Fatal("manual CD play did not leave idle")
+			}
+		})
+	}
+}
+
+func TestSleepRetriesFailedStopWithoutAutoplay(t *testing.T) {
+	ctx := context.Background()
+	b := &fakeBackend{connectErr: errors.New("MPD unavailable")}
+	c := &Controller{Backend: b}
+	if err := c.UseIdle(ctx); err == nil || c.Source() != "idle" {
+		t.Fatal("failed stop did not retain idle intent and report failure")
+	}
+	b.connectErr = nil
+	if err := c.Step(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if b.clears != 1 || len(b.starts) != 0 {
+		t.Fatal("recovery failed to stop MPD")
+	}
+}
+
+func TestSourceSelectionLeavesSleepIdle(t *testing.T) {
+	for _, source := range []string{"usb", "radio", "spotify"} {
+		t.Run(source, func(t *testing.T) {
+			c := &Controller{Backend: &fakeBackend{}}
+			if err := c.UseIdle(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			switch source {
+			case "usb":
+				c.UseUSB()
+			case "radio":
+				c.UseRadio()
+			case "spotify":
+				if err := c.UseSpotify(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if c.Source() != source {
+				t.Fatalf("source stayed %q", c.Source())
+			}
+		})
+	}
+}

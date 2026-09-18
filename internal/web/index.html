@@ -67,7 +67,7 @@ async function refresh(){
   const s=await response.json(),m=s.mpd||{},tracks=s.disc.Tracks||[];
   const radio=s.source==='radio',usb=s.source==='usb';currentSource=s.source;
   const spotify=s.source==='spotify',idle=s.source==='idle',sp=s.spotify||{},now=sp.now||{};
-  $('source').textContent=radio?'Source: Internet Radio':usb?'Source: USB Music':idle?'Spotify disconnected · CD ready to start manually':spotify?'Source: Spotify · control playback from your phone':s.spotify?.enabled?'Source: CD · Spotify '+(s.spotify.running?'ready':'unavailable'):'Source: CD';
+  $('source').textContent=radio?'Source: Internet Radio':usb?'Source: USB Music':idle?'Idle · choose a source or press Play CD':spotify?'Source: Spotify · control playback from your phone':s.spotify?.enabled?'Source: CD · Spotify '+(s.spotify.running?'ready':'unavailable'):'Source: CD';
   if(s.spotify?.error)$('source').textContent+=' · '+s.spotify.error;
   $('switchCD').hidden=!spotify&&!idle&&!usb&&!radio;$('switchCD').textContent=idle?'Play CD':'Switch to CD';$('cdAlbum').hidden=false;
   document.querySelector('[data-action=play]').textContent=idle?'Play CD':'Play';

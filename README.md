@@ -598,10 +598,13 @@ GPIO buttons. Do not guess GPIO pins from the screen size alone.
 ### Screen sleep with Spotify wake
 
 Tap the **moon icon** at the top of `/display`, or hold **KEY1 for one second**, to turn
-off the LCD backlight. The Pi, network, current audio and Spotify receiver stay
-running. A new Spotify connection or transition into playing wakes the screen;
-routine track metadata updates do not. Hold KEY1 again to wake manually, or
-use a playback button. A short KEY1 press still changes modes (on release).
+off the LCD backlight, stop music from any source, and enter idle mode. CD
+reading and caching stop too. Inserting a disc while idle does not start music.
+The Pi and network stay running, and the Spotify receiver becomes available
+for a new connection. A new Spotify connection or transition into playing wakes
+the screen; routine track metadata updates do not. Hold KEY1 again to wake the
+screen without restarting music. Press Play for CD, or choose another source,
+to leave idle and start playback. A short KEY1 press still changes modes (on release).
 AirPlay is not currently implemented, so there is no AirPlay wake integration.
 
 After updating/restarting cdplayer, install on the Pi:

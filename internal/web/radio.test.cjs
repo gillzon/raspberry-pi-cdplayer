@@ -70,7 +70,7 @@ test('display Shuffle starts a USB mix from every source and shows progress whil
 test('display follows CD, station changes and USB without leaking CD text or artwork',async()=>{
  const elements=new Map();
  const get=id=>{if(!elements.has(id))elements.set(id,{setAttribute(){},removeAttribute(name){delete this[name]}});return elements.get(id)};
- let state={source:'cd',disc:{Tracks:[]},updated:new Date().toISOString()};
+ let state={source:'cd',network:'Wi-Fi',disc:{Tracks:[]},updated:new Date().toISOString()};
  let reloads=0;
  const context=vm.createContext({
   document:{getElementById:get,addEventListener(){}},window:{parent:{postMessage(){}},location:{reload(){reloads++}}},
@@ -86,7 +86,7 @@ test('display follows CD, station changes and USB without leaking CD text or art
   await vm.runInContext('refresh()',context);
   assert.equal(get('source').textContent,'Radio · '+station);
   assert.equal(get('title').textContent,station);
-  assert.equal(get('status').textContent,'Playing');
+  assert.equal(get('status').textContent,'Playing · Wi-Fi');
   assert.equal(get('album').textContent,'Live broadcast');
   assert.equal(get('placeholder').textContent,'RADIO');
   assert.doesNotMatch(get('message').textContent,/CD/);

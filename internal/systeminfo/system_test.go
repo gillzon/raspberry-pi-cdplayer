@@ -21,6 +21,7 @@ func TestSampling(t *testing.T) {
 	write("proc/stat", "cpu 100 0 100 800 0 0 0 0 20 10\ncpu0 0 0 0 0\n")
 	write("proc/meminfo", "MemTotal: 2048 kB\nMemAvailable: 512 kB\n")
 	write("proc/uptime", "12345.5 9999\n")
+	write("proc/net/route", "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\neth0\t00000000\t0101A8C0\t0003\t0\t0\t100\t00000000\nwlan0\t00000000\t0101A8C0\t0003\t0\t0\t600\t00000000\n")
 	write("proc/device-tree/model", "Raspberry Pi 4 Model B\x00")
 	write("sys/class/thermal/thermal_zone0/type", "cpu-thermal\n")
 	write("sys/class/thermal/thermal_zone0/temp", "42500\n")
@@ -40,13 +41,30 @@ func TestSampling(t *testing.T) {
 	if s.MemoryUsed == nil || *s.MemoryUsed != 1536*1024 || *s.MemoryTotal != 2048*1024 {
 		t.Fatalf("memory: %+v", s)
 	}
-	if s.Uptime == nil || *s.Uptime != 12345.5 || s.Model != "Raspberry Pi 4 Model B" {
+	if s.Uptime == nil || *s.Uptime != 12345.5 || s.Model != "Raspberry Pi 4 Model B" || s.Network != "Ethernet" {
 		t.Fatalf("system: %+v", s)
 	}
 	write("proc/stat", "cpu 1 0 0 1\n")
 	m.sample()
 	if m.Snapshot().CPUPercent != nil {
 		t.Fatal("counter reset reported usage")
+	}
+}
+
+func TestActiveNetwork(t *testing.T) {
+	for _, test := range []struct {
+		name, routes, want string
+	}{
+		{"wifi", "Iface Destination Gateway Flags RefCnt Use Metric Mask\nwlan0 00000000 0101A8C0 0003 0 0 600 00000000\n", "Wi-Fi"},
+		{"lowest metric", "Iface Destination Gateway Flags RefCnt Use Metric Mask\nwlan0 00000000 0101A8C0 0003 0 0 600 00000000\neth0 00000000 0101A8C0 0003 0 0 100 00000000\n", "Ethernet"},
+		{"no default route", "Iface Destination Gateway Flags RefCnt Use Metric Mask\n", "Offline"},
+		{"down route", "Iface Destination Gateway Flags RefCnt Use Metric Mask\neth0 00000000 0101A8C0 0000 0 0 100 00000000\n", "Offline"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := activeNetwork(test.routes); got != test.want {
+				t.Fatalf("activeNetwork() = %q, want %q", got, test.want)
+			}
+		})
 	}
 }
 
