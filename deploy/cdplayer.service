@@ -1,7 +1,7 @@
 [Unit]
 Description=Automatic audio CD player
 Wants=cdplayer-mpd.service
-After=cdplayer-mpd.service
+After=cdplayer-mpd.service sound.target systemd-udev-trigger.service
 
 [Service]
 Type=simple
