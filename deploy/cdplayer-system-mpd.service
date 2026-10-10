@@ -1,7 +1,7 @@
 [Unit]
 Description=Automatic CD player using the system MPD instance
 Wants=mpd.service
-After=mpd.service
+After=mpd.service sound.target systemd-udev-trigger.service
 
 [Service]
 Type=simple

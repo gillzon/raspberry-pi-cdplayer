@@ -160,6 +160,10 @@ systemctl status cdplayer --no-pager
 journalctl -u cdplayer -f
 ```
 
+The service waits for MPD, the sound target, and the initial udev device events
+before starting. The optical drive itself is managed by the kernel and udev, so
+the player still retries discovery for a drive that appears later or reconnects.
+
 To install future code updates, rebuild, reinstall the binary with the same
 `sudo install` command, then run `sudo systemctl restart cdplayer`. Use this
 variant or the dedicated MPD setup below; only one Go controller should run.
