@@ -130,6 +130,13 @@ the installed app, then verifies cached playback and a positive quiet speed in
 the running API. An old override containing `-audio-cache=false` or `-cd-speed 0`
 is reported rather than silently claiming quiet mode is active.
 
+The update also disables MPD's direct `cdio_paranoia` input and sets
+`restore_paused "yes"`, backing up the config as
+`/etc/mpd.conf.before-cdplayer-cd`. This prevents an old saved `cdda://` queue
+from opening the drive at boot while the cached reader is starting. The updater
+stops cdplayer before restarting MPD, and the app requires MPD to stop and clear
+its queue before it opens a new cached disc. Audio-output settings are preserved.
+
 The script requires a clean checkout and does not discard local changes. Pull
 or build failures leave the installed version running. It saves the previous
 binary as `/usr/local/bin/cdplayer.previous` before replacing it. If the new
@@ -994,6 +1001,8 @@ The reader API is described in the [libcdio documentation](https://libcdio.githu
   the requested track, and retains only the latest waiting selection. An already
   executing MPD command may finish before the newer selection is applied. Pause,
   Stop, eject, and source changes cancel waiting track selections.
+  Physical Next/Previous also prioritize the target cache track before asking
+  MPD to play it, so a new track does not wait for the old one to finish caching.
 - A background monitor owns drive-status probes, so slow probe ioctls do not
   block web controls. The normal disc-ID guard still rejects stale selections.
 - The cache lives under `<cache-dir>/audio`, normally
@@ -1020,8 +1029,24 @@ readers. Raspberry Pi optical-drive/audio testing is still required.
 To use the alternative direct-MPD path explicitly:
 
 ```sh
+sudo systemctl stop cdplayer
+sudo python3 scripts/configure-mpd-cd.py /etc/mpd.conf --direct
+sudo systemctl restart mpd
 go run ./cmd/cdplayer -mpd 127.0.0.1:6600 -audio-cache=false -mpd-auto-device
 ```
+
+The standard update reinstates cached-only CD access. For manual cached-mode
+installation or repair, run `sudo python3 scripts/configure-mpd-cd.py /etc/mpd.conf`
+with cdplayer stopped, then restart MPD and cdplayer. For the dedicated MPD
+instance, use `/etc/cdplayer/mpd.conf` and `cdplayer-mpd.service` instead.
+
+If a disc takes tens of seconds to start, collect `sudo bash scripts/diagnose-cd.sh`
+after it begins. Compare the reader-open and first-audio timings with MPD's
+playback log: an old `cdda://` item and MPD greeting/stop timeouts indicate direct
+drive access competing with the cached reader. A message saying all outputs
+are disabled also requires choosing and applying an output in Settings.
+Neither quiet speed requests nor caching alone can eliminate the drive's
+physical spin-up, initialization, or seek time.
 
 ### Sound output settings
 

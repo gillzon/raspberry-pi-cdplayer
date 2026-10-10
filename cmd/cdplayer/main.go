@@ -172,14 +172,7 @@ func main() {
 			if d.ID != retriedDisc {
 				retriedDisc = ""
 			}
-			layout := make([]audio.Layout, 0, len(d.Layout))
-			for _, t := range d.Layout {
-				layout = append(layout, audio.Layout{Number: t.Number, Start: t.Start, End: t.End})
-			}
-			if err := audioCache.Observe(d.ID, drive.DevicePath(), layout); err != nil {
-				return err
-			}
-			err := audioCache.Ready()
+			err := prepareCachedDisc(ctx, backend, audioCache, d, drive.DevicePath())
 			if errors.Is(err, audio.ErrLayoutMismatch) && retriedDisc != d.ID {
 				retriedDisc = d.ID
 				slog.Warn("CD layout changed; refreshing TOC and retrying once", "error", err)
@@ -395,6 +388,11 @@ func main() {
 
 		err := request.ctx.Err()
 		position := -1
+		cacheNavigation := audioCache != nil && controller.Source() == "cd" && (request.command.Action == "next" || request.command.Action == "previous")
+		if err == nil && cacheNavigation {
+			request.command.Track, err = adjacentCDTrack(request.command.Action, backend.Status(), controller.Disc().Tracks)
+			request.command.Action = "track"
+		}
 		if err == nil && request.command.DiscID != "" && request.command.DiscID != controller.Disc().ID {
 			err = fmt.Errorf("disc changed; select a track on the current disc")
 		}
@@ -607,6 +605,9 @@ func main() {
 					err = audioCache.Ready()
 				} else {
 
+					if cacheNavigation {
+						audioCache.Select(request.command.Track)
+					}
 					err = backend.Control(request.command.Action, position)
 				}
 			}

@@ -55,6 +55,7 @@ trap 'rm -rf -- "$build_dir"' EXIT
 echo "Building and testing $(git rev-parse --short HEAD)…"
 go test ./...
 python3 -m unittest discover -s internal/library -p '*_test.py'
+python3 -m unittest discover -s scripts -p 'test_mpd_cd.py'
 go build -trimpath -o "$build_dir/cdplayer" ./cmd/cdplayer
 if ! "$build_dir/cdplayer" -check-audio; then
     echo 'Quiet CD playback needs the reader libraries. Run: sudo apt install cd-paranoia' >&2
@@ -74,6 +75,7 @@ if ! getent group cdrom >/dev/null; then
 fi
 restart_mpd=true
 sudo python3 scripts/configure-mpd-queue.py /etc/mpd.conf
+sudo python3 scripts/configure-mpd-cd.py /etc/mpd.conf
 # Add selectable outputs using stable ALSA card names. Existing audio outputs
 # remain enabled until the user chooses a destination in Settings.
 if [[ -d /proc/asound ]]; then
@@ -95,6 +97,8 @@ sudo mv -f /usr/local/bin/cdplayer.new /usr/local/bin/cdplayer
 sudo install -m 0644 "$build_dir/cdplayer.service" /etc/systemd/system/cdplayer.service
 sudo systemctl daemon-reload
 sudo systemctl enable mpd.service cdplayer.service
+# Release our reader before MPD restarts. Its old saved queue may contain cdda://.
+sudo systemctl stop cdplayer.service
 if "$restart_mpd"; then
     sudo systemctl restart mpd.service
 else
