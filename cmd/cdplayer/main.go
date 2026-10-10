@@ -42,6 +42,7 @@ func main() {
 	cachedAudio := flag.Bool("audio-cache", false, "enable the optional background CD reader and WAV cache")
 	verifyAudio := flag.Bool("audio-verify", false, "enable slower software audio verification and repair for difficult discs")
 	cdSpeed := flag.Int("cd-speed", audio.DefaultReadSpeed, "request CD read speed multiplier for cached audio (default 2 for quiet playback; 0 leaves drive default)")
+	cdStartupSpeed := flag.Int("cd-startup-speed", audio.DefaultStartupSpeed, "request startup CD speed for cached audio before switching to cd-speed (0 disables boost)")
 	autoDevice := flag.Bool("mpd-auto-device", false, "let MPD select the CD drive (single-drive workaround for Bad track number)")
 	poll := flag.Duration("poll", time.Second, "disc polling interval")
 	httpAddress := flag.String("http", ":8080", "web interface address (empty disables it)")
@@ -58,6 +59,10 @@ func main() {
 	flag.Parse()
 	if *cdSpeed < 0 || int64(*cdSpeed) > 2147483647 {
 		slog.Error("cd-speed must be a nonnegative 32-bit integer")
+		os.Exit(2)
+	}
+	if *cdStartupSpeed < 0 || int64(*cdStartupSpeed) > 2147483647 {
+		slog.Error("cd-startup-speed must be a nonnegative 32-bit integer")
 		os.Exit(2)
 	}
 	if *checkAudio {
@@ -135,7 +140,7 @@ func main() {
 		if *cacheDir != "" {
 			root = filepath.Join(*cacheDir, "audio")
 		}
-		audioCache = &audio.Cache{Root: root, BaseURL: "http://" + audioListener.Addr().String(), Open: audio.ReaderWithOptions(*verifyAudio, *cdSpeed)}
+		audioCache = &audio.Cache{Root: root, BaseURL: "http://" + audioListener.Addr().String(), Open: audio.ReaderWithSpeedProfile(*verifyAudio, *cdSpeed, *cdStartupSpeed)}
 		audioCache.ReadyNotify = audioReady
 		if err := audioCache.Init(); err != nil {
 			audioListener.Close()
@@ -281,14 +286,16 @@ func main() {
 	ticker := time.NewTicker(*poll)
 	defer ticker.Stop()
 	slog.Info("CD player starting", "device", *device, "mpd", *address)
-	screenAsleep := false
+	screen := screenState{idleSince: time.Now()}
 	selectedStation := radio.Stations()[0]
 	lastError := ""
 	publish := func(err error) {
 		trackRequests.Update(controller.Disc().ID, controller.Disc().Tracks, controller.Source() == "cd")
 		albums.Observe(ctx, controller.Disc())
 		selectedDevice = drive.DevicePath()
-		state := web.State{ScreenAsleep: screenAsleep, Outputs: outputs, Source: controller.Source(), Network: monitor.Snapshot().Network, Spotify: receiver.State, Device: selectedDevice, Disc: controller.Disc(), MPD: backend.Status(), Updated: time.Now()}
+		state := web.State{Outputs: outputs, Source: controller.Source(), Network: monitor.Snapshot().Network, Spotify: receiver.State, Device: selectedDevice, Disc: controller.Disc(), MPD: backend.Status(), Updated: time.Now()}
+		screen.update(state.Updated, state)
+		state.ScreenAsleep = screen.asleep
 		if controller.Source() == "radio" {
 			station := selectedStation
 			state.Radio = &station
@@ -331,7 +338,7 @@ func main() {
 			if err := request.ctx.Err(); err != nil {
 				return err
 			}
-			sleep := request.command.Action == "screen-sleep" || (request.command.Action == "screen-toggle" && !screenAsleep)
+			sleep := request.command.Action == "screen-sleep" || (request.command.Action == "screen-toggle" && !screen.asleep)
 			if sleep {
 				trackRequests.Cancel()
 				// Attempt both stops even if either fails. Idle suppresses autoplay
@@ -342,11 +349,11 @@ func main() {
 					return err
 				}
 			}
-			screenAsleep = sleep
+			screen.setAsleep(sleep, time.Now())
 			publish(nil)
 			return nil
-		case "play", "toggle", "next", "previous", "source-next", "source-cd", "source-usb", "source-radio", "radio-play", "usb-play", "usb-mix", "source-spotify":
-			screenAsleep = false
+		case "play", "toggle", "track", "next", "previous", "source-next", "source-cd", "source-usb", "source-radio", "radio-play", "usb-play", "usb-mix", "source-spotify":
+			screen.setAsleep(false, time.Now())
 		}
 
 		if request.command.Action == "source-next" {
@@ -467,7 +474,7 @@ func main() {
 					err = fmt.Errorf("obsolete Spotify receiver")
 				} else {
 					if spotifyWakesScreen(request.command.Event, receiver.State.Playback) {
-						screenAsleep = false
+						screen.setAsleep(false, time.Now())
 					}
 					receiver.Apply(request.command.Event)
 					if request.command.Event.Kind == "session_disconnected" {
@@ -479,7 +486,7 @@ func main() {
 					err = fmt.Errorf("obsolete Spotify receiver")
 				} else {
 					if spotifyWakesScreen(request.command.Event, receiver.State.Playback) {
-						screenAsleep = false
+						screen.setAsleep(false, time.Now())
 					}
 					err = controller.UseSpotify(request.ctx)
 					if err == nil && request.command.Event.Kind == "session_connected" {

@@ -591,7 +591,15 @@ Preview with a 320×240 browser viewport. Keyboard equivalents for testing are
 Left/Right arrows (previous/next), P (pause), and Enter (play); these do not read
 GPIO buttons. Do not guess GPIO pins from the screen size alone.
 
-### Screen sleep with Spotify wake
+### Automatic screen sleep and manual sleep
+
+The LCD backlight automatically turns off after **three minutes without playback**,
+including when paused, stopped, or waiting for music after startup. CD, USB,
+radio, and Spotify playback keep it awake. Automatic sleep preserves the selected
+source and queue; resuming playback or starting new music wakes the display.
+The Pi and Spotify receiver stay running. Playback controls or a manual wake
+give the display another three minutes if music does not start. Routine status
+polls and metadata updates do not reset the timer.
 
 Tap the **moon icon** at the top of `/display`, or hold **KEY1 for one second**, to turn
 off the LCD backlight, stop music from any source, and enter idle mode. CD
@@ -613,8 +621,9 @@ bash scripts/setup-player-buttons.sh --rev2.1
 The screen service uses the existing on/off `rpi_backlight` sysfs interface,
 without claiming GPIO18. It restores the backlight if stopped or if the player
 cannot be reached. No suspend or shutdown is performed. The Sleep button
-requires this service to physically turn the panel off. Touching the dark panel
-is not a dedicated wake gesture; use KEY1 or reconnect Spotify instead.
+and automatic timeout require this service to physically turn the panel off.
+Touching the dark panel is not a dedicated wake gesture; use KEY1 or reconnect
+Spotify instead.
 
 ```sh
 journalctl -u cdplayer-screen -n 30 --no-pager
@@ -917,15 +926,26 @@ For a foreground run, use `go run ./cmd/cdplayer -mpd 127.0.0.1:6600 -audio-cach
 (stop the boot service first). `cdplayer -check-audio` checks the optional
 reader dependencies without opening the drive.
 
-When enabled, cached playback requests **2× CD speed by default**. This keeps
-background caching quieter while leaving headroom above real-time playback.
-Cache filling takes longer than at full drive speed.
-Use `-cd-speed 1` to request the lowest speed (with less headroom for read delays),
-or `-cd-speed 0` to leave speed selection to the drive.
-The option applies after libcdio opens and initializes the drive. The helper
-logs whether the request was accepted or rejected; some drives ignore or clamp
-low-speed requests, so actual noise and speed depend on the hardware. Initial
-spin-up and drive initialization can still be audible.
+When enabled, cached playback requests **8× speed for reader startup**, then
+**2× for quiet playback**. The faster request is made before CDDA initialization
+and its probe reads, so a new reader need not inherit the previous disc's slow
+setting. After the first audio read, the helper requests 2× before delivering
+that audio to MPD. The remaining disc is cached at the quiet speed; it does not
+wait to copy the whole album before playing, or boost again at each track change.
+
+Use `-cd-startup-speed` to change the startup speed; `-cd-startup-speed 0`
+disables the boost. Startup is only boosted when this speed exceeds `-cd-speed`.
+Use `-cd-speed 1` for the lowest playback speed (with less headroom for read
+delays), or `-cd-speed 0` to disable both speed requests and leave the drive alone.
+These settings require `-audio-cache`; direct MPD playback manages its own reader.
+
+The helper logs whether each speed request was accepted or rejected. An
+unsupported request does not stop playback. Actual noise, speed, and the time
+taken to settle depend on the drive; accepting a request does not measure motor
+speed. This cannot eliminate the firmware's insertion/spin-up delay or the
+initial table-of-contents scan that precedes the reader. Test a disc swap on
+the Pi and check `journalctl -u cdplayer` for startup/playback speed results.
+The reader API is described in the [libcdio documentation](https://libcdio.github.io/libcdio.html).
 
 - One helper owns the digital audio-reading session and seeks within that
   session instead of reopening the drive for each MPD track URL. By default,

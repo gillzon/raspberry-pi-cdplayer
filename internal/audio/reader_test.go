@@ -67,6 +67,21 @@ func TestRealReaderSeeksCDImageWithoutReopening(t *testing.T) {
 		}
 	}
 }
+
+func TestReaderSpeedProfile(t *testing.T) {
+	output, err := exec.Command("python3", "-m", "unittest", "discover", "-s", ".", "-p", "reader_test.py").CombinedOutput()
+	if err != nil {
+		t.Fatalf("reader speed profile: %v\n%s", err, output)
+	}
+}
+
+func TestReaderRejectsInvalidSpeeds(t *testing.T) {
+	for _, speeds := range [][2]int{{-1, 8}, {2, -1}} {
+		if _, err := ReaderWithSpeedProfile(false, speeds[0], speeds[1])(context.Background(), "/dev/fake", nil); err == nil {
+			t.Fatalf("accepted invalid speeds %v", speeds)
+		}
+	}
+}
 func TestCacheStorageLockAndCrashCleanup(t *testing.T) {
 	root := t.TempDir()
 	old := filepath.Join(root, "cd-audio-obsolete")

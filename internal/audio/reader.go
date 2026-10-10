@@ -23,6 +23,9 @@ var readerProgram string
 // DefaultReadSpeed keeps the drive quiet with headroom above real-time playback.
 const DefaultReadSpeed = 2
 
+// DefaultStartupSpeed allows faster reader initialization and the first read.
+const DefaultStartupSpeed = 8
+
 var ErrLayoutMismatch = errors.New("CD track layout changed")
 
 type Layout struct {
@@ -61,15 +64,25 @@ func ReaderWithVerification(verify bool) OpenReader {
 // ReaderWithOptions optionally requests a CD read-speed multiplier. This is
 // not a current limit or a motor acceleration control; firmware may reject it.
 func ReaderWithOptions(verify bool, speed int) OpenReader {
+	return ReaderWithSpeedProfile(verify, speed, DefaultStartupSpeed)
+}
+
+// ReaderWithSpeedProfile requests startup speed before CDDA initialization,
+// then playback speed before publishing the first audio. Zero playback speed
+// leaves drive speed untouched; zero startup speed disables the startup boost.
+func ReaderWithSpeedProfile(verify bool, speed, startupSpeed int) OpenReader {
 	return func(ctx context.Context, device string, layout []Layout) (Reader, error) {
 		if speed < 0 || int64(speed) > 2147483647 {
 			return nil, fmt.Errorf("invalid CD read speed %d", speed)
+		}
+		if startupSpeed < 0 || int64(startupSpeed) > 2147483647 {
+			return nil, fmt.Errorf("invalid CD startup speed %d", startupSpeed)
 		}
 		verification := "False"
 		if verify {
 			verification = "True"
 		}
-		program := fmt.Sprintf("VERIFY_AUDIO = %s\nCD_READ_SPEED = %d\n", verification, speed) + readerProgram
+		program := fmt.Sprintf("VERIFY_AUDIO = %s\nCD_READ_SPEED = %d\nCD_STARTUP_SPEED = %d\n", verification, speed, startupSpeed) + readerProgram
 		return openReaderProgram(ctx, device, layout, program)
 	}
 }

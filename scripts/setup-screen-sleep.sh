@@ -27,4 +27,4 @@ if ! systemctl is-active --quiet cdplayer-screen.service; then
     sudo journalctl -u cdplayer-screen.service -n 30 --no-pager
     exit 1
 fi
-echo 'Screen sleep ready. Tap Sleep on the display; a Spotify connection wakes it.'
+echo 'Screen sleep ready. The backlight turns off after 3 minutes without playback and wakes when playback resumes. Tap Sleep for manual sleep.'

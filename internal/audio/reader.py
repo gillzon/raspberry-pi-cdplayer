@@ -23,6 +23,14 @@ def watch_parent(parent):
     threading.Thread(target=watch, daemon=True).start()
 
 
+def request_speed(set_speed, handle, speed, phase):
+    result = set_speed(handle, speed)
+    if result != 0:
+        print(f'CD reader: WARNING: drive rejected {speed}x {phase} speed (code {result}); continuing at drive-selected speed', file=sys.stderr, flush=True)
+    else:
+        print(f'CD reader: drive accepted {speed}x {phase} speed request; actual speed is not measured', file=sys.stderr, flush=True)
+
+
 def main():
     faulthandler.enable()
     # Do not leave a reader running after an unexpected Go process exit.
@@ -36,7 +44,7 @@ def main():
         f = getattr(lib, name)
         f.restype, f.argtypes = result, list(args)
         return f
-    identify = fn('cdio_cddap_identify', C.c_void_p, C.c_char_p, C.c_int, C.c_void_p)
+    identify = fn('cdio_cddap_identify_cdio', C.c_void_p, C.c_void_p, C.c_int, C.c_void_p)
     open_drive = fn('cdio_cddap_open', C.c_int, C.c_void_p)
     close_drive = fn('cdio_cddap_close', C.c_int, C.c_void_p)
     set_speed = fn('cdio_cddap_speed_set', C.c_int, C.c_void_p, C.c_int)
@@ -57,23 +65,41 @@ def main():
     first = fn('cdio_cddap_track_firstsector', C.c_int32, C.c_void_p, C.c_ubyte)
     last = fn('cdio_cddap_track_lastsector', C.c_int32, C.c_void_p, C.c_ubyte)
     is_audio = fn('cdio_cddap_track_audiop', C.c_int, C.c_void_p, C.c_ubyte)
+    cdioname = ctypes.util.find_library('cdio')
+    if not cdioname:
+        raise RuntimeError('libcdio missing; install the libcdio runtime package')
+    cdio = C.CDLL(cdioname)
+    def cdio_fn(name, result, *args):
+        f = getattr(cdio, name)
+        f.restype, f.argtypes = result, list(args)
+        return f
+    open_cdio = cdio_fn('cdio_open', C.c_void_p, C.c_char_p, C.c_int)
+    close_cdio = cdio_fn('cdio_destroy', None, C.c_void_p)
+    set_cdio_speed = cdio_fn('cdio_set_speed', C.c_int, C.c_void_p, C.c_int)
     if sys.argv[1] == '--check':
         print('Persistent CD reader dependencies available')
         return
-    drive = identify(sys.argv[1].encode(), 1, None)
-    if not drive:
-        raise RuntimeError('cannot identify CD drive ' + sys.argv[1])
+    handle = open_cdio(sys.argv[1].encode(), 0)  # DRIVER_UNKNOWN
+    if not handle:
+        raise RuntimeError('cannot open CD device ' + sys.argv[1])
+    speed = globals().get('CD_READ_SPEED', 0)
+    startup_speed = globals().get('CD_STARTUP_SPEED', 0)
+    boosted = speed > 0 and startup_speed > speed
+    quiet_pending = boosted
+    drive = None
     para = None
     try:
+        if boosted:
+            # Set this before CDDA initialization, which performs probe reads
+            # and may otherwise inherit the previous disc's quiet speed.
+            request_speed(set_cdio_speed, handle, startup_speed, 'startup')
+        drive = identify(handle, 1, None)
+        if not drive:
+            raise RuntimeError('cannot identify CD drive ' + sys.argv[1])
         if open_drive(drive) != 0:
             raise RuntimeError('cannot open CD drive ' + sys.argv[1])
-        speed = globals().get('CD_READ_SPEED', 0)
-        if speed > 0:
-            result = set_speed(drive, speed)
-            if result != 0:
-                print(f'CD reader: WARNING: drive rejected {speed}x read speed (code {result}); using drive-selected speed', file=sys.stderr, flush=True)
-            else:
-                print(f'CD reader: drive accepted {speed}x read-speed request; actual speed and current are not measured', file=sys.stderr, flush=True)
+        if speed > 0 and not boosted:
+            request_speed(set_speed, drive, speed, 'playback')
         layout = json.loads(sys.argv[2])
         for t in layout:
             n = t['number']
@@ -117,12 +143,23 @@ def main():
                 swapped = bytearray(data)
                 swapped[0::2], swapped[1::2] = data[1::2], data[0::2]
                 data = bytes(swapped)
+            if quiet_pending:
+                # MPD cannot start cached playback until this first response.
+                # Subsequent blocks and track changes keep the quiet speed.
+                request_speed(set_speed, drive, speed, 'playback')
+                quiet_pending = False
             sys.stdout.buffer.write(struct.pack('<I', len(data)) + data)
             sys.stdout.buffer.flush()
     finally:
+        if quiet_pending:
+            # Restore quiet speed on initialization/read failure or clean EOF.
+            request_speed(set_cdio_speed, handle, speed, 'playback')
         if para:
             free(para)
-        close_drive(drive)
+        if drive:
+            close_drive(drive)  # Also releases the owned CdIo handle.
+        else:
+            close_cdio(handle)
 
 
 if __name__ == '__main__':
