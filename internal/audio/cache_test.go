@@ -310,3 +310,82 @@ func TestShortFinalBlockServesExactTrackLength(t *testing.T) {
 		t.Fatalf("incomplete or padded audio: status=%d bytes=%d", response.Code, response.Body.Len())
 	}
 }
+
+func TestPausedCacheRetainsAudioAndBlocksReadAheadAndHTTPDemand(t *testing.T) {
+	c, r, s := setupCache(t)
+	nextRead(t, r)
+	c.SetPaused(true)
+	r.allow <- struct{}{} // Only the already-started block may finish.
+	deadline := time.Now().Add(time.Second)
+	for c.Status().CachedBytes == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := c.Status(); !got.Paused || got.CachedBytes != blockSectors*sectorBytes {
+		t.Fatalf("in-flight audio not retained: %+v", got)
+	}
+	url := c.TrackURL(1)
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest("GET", url, nil)
+	request.Header.Set("Range", "bytes=44-47")
+	c.ServeHTTP(response, request)
+	if response.Code != 206 || response.Body.Len() != 4 {
+		t.Fatal("paused cache lost available audio")
+	}
+	// MPD may keep its HTTP connection open and ask for more while paused.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		reader := &cachedReader{ctx: ctx, session: s, track: s.tracks[1], offset: 44}
+		_, err := reader.Read(make([]byte, 4))
+		done <- err
+	}()
+	c.Select(3) // Changing priority alone must not wake the optical reader.
+	select {
+	case got := <-r.calls:
+		t.Fatalf("read while paused: %+v", got)
+	case <-time.After(50 * time.Millisecond):
+	}
+	if r.closed.Load() || c.TrackURL(1) != url {
+		t.Fatal("pause discarded the reader or track URLs")
+	}
+	c.SetPaused(false)
+	if got := nextRead(t, r); got.sector != 300 {
+		t.Fatalf("resume ignored selection: %+v", got)
+	}
+	r.allow <- struct{}{}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("resume did not unblock HTTP demand")
+	}
+}
+
+func TestPausedCacheCanBeRemovedAndNewDiscStartsActive(t *testing.T) {
+	c, r, s := setupCache(t)
+	nextRead(t, r)
+	c.SetPaused(true)
+	r.allow <- struct{}{}
+	c.Close()
+	select {
+	case <-s.done:
+	case <-time.After(time.Second):
+		t.Fatal("paused worker survived removal")
+	}
+	newReader := &fakeReader{calls: make(chan readCall, 1), allow: make(chan struct{})}
+	c.Open = func(ctx context.Context, _ string, _ []Layout) (Reader, error) {
+		newReader.ctx = ctx
+		return newReader, nil
+	}
+	if err := c.Observe("new", "fake", []Layout{{1, 0, 75}}); err != nil {
+		t.Fatal(err)
+	}
+	defer c.Shutdown()
+	if c.Status().Paused {
+		t.Fatal("new disc inherited old pause")
+	}
+	nextRead(t, newReader)
+}

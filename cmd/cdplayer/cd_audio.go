@@ -14,6 +14,44 @@ type cdBackend interface {
 	Clear() error
 }
 
+type cdPlaybackBackend interface {
+	Control(string, int) error
+}
+
+// Resume reads before asking MPD to play: its decoder may already be waiting
+// for an uncached block. Failed commands restore the previous cache state.
+func controlCachedAudio(cache *audio.Cache, backend cdPlaybackBackend, action string, position int) error {
+	if cache == nil {
+		return backend.Control(action, position)
+	}
+	wasPaused := cache.Status().Paused
+	if action == "play" || action == "track" {
+		cache.SetPaused(false)
+	}
+	if err := backend.Control(action, position); err != nil {
+		cache.SetPaused(wasPaused)
+		return err
+	}
+	if action == "pause" || action == "stop" {
+		cache.SetPaused(true)
+	}
+	return nil
+}
+
+// Called after a successful controller poll, so a stale stopped status during
+// initial preparation cannot suspend the first audio needed for autoplay.
+func syncCachedAudio(cache *audio.Cache, source string, status map[string]string) {
+	if cache == nil || source != "cd" || cache.Ready() != nil {
+		return
+	}
+	switch status["state"] {
+	case "play":
+		cache.SetPaused(false)
+	case "pause", "stop":
+		cache.SetPaused(true)
+	}
+}
+
 // MPD may have restored a direct cdda:// queue from an older installation.
 // Release that reader before opening ours, even when stopping MPD needs retries.
 func prepareCachedDisc(ctx context.Context, backend cdBackend, cache *audio.Cache, d disc.Disc, device string) error {

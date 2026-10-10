@@ -597,6 +597,10 @@ func main() {
 					}
 				} else if controller.Source() != "cd" {
 					err = fmt.Errorf("select Switch to CD first")
+				} else if audioCache != nil && (request.command.Action == "pause" || request.command.Action == "stop") && errors.Is(audioCache.Ready(), audio.ErrPreparing) {
+					// Nothing is playing yet. Cancel preparation and suppress its
+					// pending autoplay until the user presses Play again.
+					err = controller.UseIdle(request.ctx)
 				} else if audioCache != nil && request.command.Action == "play" && audioCache.Status().Error != "" {
 					// Manual Play retries the reader instead of replaying broken URLs.
 					audioCache.Close()
@@ -608,7 +612,7 @@ func main() {
 					if cacheNavigation {
 						audioCache.Select(request.command.Track)
 					}
-					err = backend.Control(request.command.Action, position)
+					err = controlCachedAudio(audioCache, backend, request.command.Action, position)
 				}
 			}
 		}
@@ -627,6 +631,10 @@ func main() {
 			controller.SpotifyDisconnected()
 		}
 		err := controller.Step(ctx)
+		if err == nil {
+			// Also suspend at album end and for controls from other MPD clients.
+			syncCachedAudio(audioCache, controller.Source(), backend.Status())
+		}
 		if err != nil {
 			if err.Error() != lastError {
 				slog.Error("CD player", "error", err)

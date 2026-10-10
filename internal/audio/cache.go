@@ -35,6 +35,7 @@ type track struct {
 }
 type Status struct {
 	DiscID      string `json:"disc_id"`
+	Paused      bool   `json:"paused"`
 	CachedBytes int64  `json:"cached_bytes"`
 	TotalBytes  int64  `json:"total_bytes"`
 	Error       string `json:"error"`
@@ -60,6 +61,7 @@ type session struct {
 	id, token, dir string
 	tracks         []*track
 	selected       int
+	paused         bool
 	demand         map[*track]int
 	changed        chan struct{}
 	err            error
@@ -205,6 +207,25 @@ func (c *Cache) Select(number int) {
 		}
 	}
 }
+
+// SetPaused suspends optical reads without discarding cached audio or changing
+// track URLs. An in-flight read may finish; HTTP demand and track selection do
+// not resume extraction. Keep the reader open to avoid repeating initialization.
+func (c *Cache) SetPaused(paused bool) {
+	c.mu.Lock()
+	s := c.session
+	c.mu.Unlock()
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.paused != paused {
+		s.paused = paused
+		s.signal()
+	}
+}
+
 func (c *Cache) Status() Status {
 	c.mu.Lock()
 	s := c.session
@@ -214,7 +235,7 @@ func (c *Cache) Status() Status {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	v := Status{DiscID: s.id, CachedBytes: s.cached, TotalBytes: s.total}
+	v := Status{DiscID: s.id, Paused: s.paused, CachedBytes: s.cached, TotalBytes: s.total}
 	if s.err != nil {
 		v.Error = s.err.Error()
 	}
@@ -232,6 +253,26 @@ func (s *session) fail(err error) {
 	s.mu.Unlock()
 	slog.Error("CD audio cache failed", "error", err)
 }
+
+func (s *session) waitActive() error {
+	for {
+		if err := s.ctx.Err(); err != nil {
+			return err
+		}
+		s.mu.Lock()
+		paused, changed := s.paused, s.changed
+		s.mu.Unlock()
+		if !paused {
+			return nil
+		}
+		select {
+		case <-s.ctx.Done():
+			return s.ctx.Err()
+		case <-changed:
+		}
+	}
+}
+
 func (s *session) run(device string, layout []Layout, open OpenReader, readyNotify chan<- struct{}) {
 	started := time.Now()
 	r, err := open(s.ctx, device, layout)
@@ -248,7 +289,7 @@ func (s *session) run(device string, layout []Layout, open OpenReader, readyNoti
 		}
 	}()
 	for {
-		if s.ctx.Err() != nil {
+		if s.waitActive() != nil {
 			return
 		}
 		s.mu.Lock()
@@ -313,6 +354,9 @@ func (s *session) run(device string, layout []Layout, open OpenReader, readyNoti
 		count := min(blockSectors, target.layout.End-start)
 		var data []byte
 		for len(data) < count*sectorBytes {
+			if s.waitActive() != nil {
+				return
+			}
 			part, e := r.Read(start+len(data)/sectorBytes, count-len(data)/sectorBytes)
 			if e != nil {
 				err = e

@@ -619,6 +619,14 @@ The Pi and Spotify receiver stay running. Playback controls or a manual wake
 give the display another three minutes if music does not start. Routine status
 polls and metadata updates do not reset the timer.
 
+Pausing or stopping CD playback also suspends disc caching, including MPD
+read-ahead requests. Already cached audio and the paused playback position are
+retained; Play resumes reading and wakes the screen. Caching also suspends when
+MPD reaches the end of the queue. An optical read already in progress may finish
+before reading stops; the drive's firmware controls when its motor spins down.
+Stopping or pausing during initial disc preparation cancels that startup;
+press Play to start it again.
+
 Tap the **moon icon** at the top of `/display`, or hold **KEY1 for one second**, to turn
 off the LCD backlight, stop music from any source, and enter idle mode. CD
 reading and caching stop too. Inserting a disc while idle does not start music.

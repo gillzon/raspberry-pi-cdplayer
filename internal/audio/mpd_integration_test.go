@@ -123,4 +123,31 @@ func TestRealMPDStartsAndChangesCachedTracks(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitPlaying("1", started)
+	for _, action := range []string{"pause", "stop"} {
+		if err := client.Control(action, 0); err != nil {
+			t.Fatal(err)
+		}
+		cache.SetPaused(true)
+		// Allow the single in-flight 100ms read to finish. MPD can retain
+		// HTTP read-ahead demand, but it must not wake the optical reader.
+		time.Sleep(200 * time.Millisecond)
+		cached := cache.Status().CachedBytes
+		time.Sleep(250 * time.Millisecond)
+		if got := cache.Status().CachedBytes; got != cached {
+			t.Fatalf("%s kept caching: %d -> %d", action, cached, got)
+		}
+		started = time.Now()
+		cache.SetPaused(false)
+		if err := client.Control("play", 0); err != nil {
+			t.Fatal(err)
+		}
+		waitPlaying("1", started)
+		deadline := time.Now().Add(time.Second)
+		for cache.Status().CachedBytes == cached && time.Now().Before(deadline) {
+			time.Sleep(10 * time.Millisecond)
+		}
+		if cache.Status().CachedBytes <= cached {
+			t.Fatalf("cache did not resume after %s", action)
+		}
+	}
 }
