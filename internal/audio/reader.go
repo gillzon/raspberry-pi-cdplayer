@@ -24,7 +24,7 @@ var readerProgram string
 const DefaultReadSpeed = 2
 
 // DefaultStartupSpeed allows faster reader initialization and the first read.
-const DefaultStartupSpeed = 8
+const DefaultStartupSpeed = 4
 
 var ErrLayoutMismatch = errors.New("CD track layout changed")
 

@@ -43,24 +43,27 @@ var navigation []byte
 var libraryScript []byte
 
 type State struct {
-	ScreenAsleep   bool                  `json:"screen_asleep"`
-	DisplayVersion string                `json:"display_version"`
-	Radio          *radio.Station        `json:"radio,omitempty"`
-	USBMix         bool                  `json:"usb_mix"`
-	USB            *library.Track        `json:"usb,omitempty"`
-	USBQueueLength int                   `json:"usb_queue_length"`
-	Outputs        []mpd.Output          `json:"outputs"`
-	Selection      player.TrackSelection `json:"selection"`
-	Audio          audio.Status          `json:"audio"`
-	Source         string                `json:"source"`
-	Network        string                `json:"network"`
-	Spotify        spotify.State         `json:"spotify"`
-	Device         string                `json:"device"`
-	Disc           disc.Disc             `json:"disc"`
-	MPD            map[string]string     `json:"mpd"`
-	Error          string                `json:"error"`
-	Updated        time.Time             `json:"updated"`
-	Metadata       metadata.Info         `json:"metadata"`
+	AudioCacheEnabled bool                  `json:"audio_cache_enabled"`
+	CDReadSpeed       int                   `json:"cd_read_speed"`
+	CDStartupSpeed    int                   `json:"cd_startup_speed"`
+	ScreenAsleep      bool                  `json:"screen_asleep"`
+	DisplayVersion    string                `json:"display_version"`
+	Radio             *radio.Station        `json:"radio,omitempty"`
+	USBMix            bool                  `json:"usb_mix"`
+	USB               *library.Track        `json:"usb,omitempty"`
+	USBQueueLength    int                   `json:"usb_queue_length"`
+	Outputs           []mpd.Output          `json:"outputs"`
+	Selection         player.TrackSelection `json:"selection"`
+	Audio             audio.Status          `json:"audio"`
+	Source            string                `json:"source"`
+	Network           string                `json:"network"`
+	Spotify           spotify.State         `json:"spotify"`
+	Device            string                `json:"device"`
+	Disc              disc.Disc             `json:"disc"`
+	MPD               map[string]string     `json:"mpd"`
+	Error             string                `json:"error"`
+	Updated           time.Time             `json:"updated"`
+	Metadata          metadata.Info         `json:"metadata"`
 }
 
 type Command struct {

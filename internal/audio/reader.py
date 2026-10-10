@@ -5,9 +5,11 @@ import ctypes.util
 import json
 import faulthandler
 import os
+import stat
 import struct
 import sys
 import threading
+import time
 
 
 def watch_parent(parent):
@@ -23,12 +25,53 @@ def watch_parent(parent):
     threading.Thread(target=watch, daemon=True).start()
 
 
+def linux_speed(device, speed):
+    """Fallback for physical Linux drives; never issue ioctls on image files."""
+    if not sys.platform.startswith('linux') or not stat.S_ISBLK(os.stat(device).st_mode):
+        raise OSError('not a Linux block device')
+    import fcntl
+    fd = os.open(device, os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC)
+    try:
+        fcntl.ioctl(fd, 0x5322, speed)  # CDROM_SELECT_SPEED, multiplier (not a pointer)
+    finally:
+        os.close(fd)
+
+
 def request_speed(set_speed, handle, speed, phase):
     result = set_speed(handle, speed)
     if result != 0:
-        print(f'CD reader: WARNING: drive rejected {speed}x {phase} speed (code {result}); continuing at drive-selected speed', file=sys.stderr, flush=True)
-    else:
-        print(f'CD reader: drive accepted {speed}x {phase} speed request; actual speed is not measured', file=sys.stderr, flush=True)
+        try:
+            linux_speed(sys.argv[1], speed)
+        except OSError as error:
+            print(f'CD reader: WARNING: cannot enforce {speed}x {phase} speed (libcdio {result}; Linux fallback: {error}); drive may remain noisy', file=sys.stderr, flush=True)
+            return False
+        print(f'CD reader: Linux fallback accepted {speed}x {phase} speed request; actual speed is not measured', file=sys.stderr, flush=True)
+        return True
+    print(f'CD reader: drive accepted {speed}x {phase} speed request; actual speed is not measured', file=sys.stderr, flush=True)
+    return True
+
+
+class ReadPacer:
+    """Limit sustained extraction even when firmware ignores the speed request.
+
+    No accumulated credit: a long seek or pause must not cause a catch-up burst.
+    The first read starts immediately; subsequent reads allow playback headroom.
+    This limits data throughput, not the motor's physical speed.
+    """
+    def __init__(self, speed):
+        self.speed = speed
+        self.next_read = 0
+
+    def begin(self):
+        if self.speed > 0:
+            delay = self.next_read - time.monotonic()
+            if delay > 0:
+                time.sleep(delay)
+        return time.monotonic()
+
+    def finish(self, started, sectors):
+        if self.speed > 0:
+            self.next_read = started + sectors / (75 * self.speed)
 
 
 def main():
@@ -93,6 +136,9 @@ def main():
             # Set this before CDDA initialization, which performs probe reads
             # and may otherwise inherit the previous disc's quiet speed.
             request_speed(set_cdio_speed, handle, startup_speed, 'startup')
+        elif speed > 0:
+            # A disabled boost must also keep CDDA's probe reads quiet.
+            request_speed(set_cdio_speed, handle, speed, 'playback')
         drive = identify(handle, 1, None)
         if not drive:
             raise RuntimeError('cannot identify CD drive ' + sys.argv[1])
@@ -112,12 +158,16 @@ def main():
                 raise RuntimeError('cannot initialize CD reader')
             mode(para, 0xff ^ 0x20)
         next_sector = None
+        pacer = ReadPacer(speed)
+        if speed > 0:
+            print(f'CD reader: background extraction paced at at most {speed}x audio rate', file=sys.stderr, flush=True)
         sys.stdout.buffer.write(b'CDPCM1\n')
         sys.stdout.buffer.flush()
         for line in sys.stdin.buffer:
             sector, count = map(int, line.split())
             if count < 1 or count > 75 or not any(t['start'] <= sector and sector + count <= t['end'] for t in layout):
                 raise RuntimeError('read outside audio track')
+            started = pacer.begin()
             if para:
                 if next_sector != sector:
                     if seek(para, sector, 0) < 0:
@@ -148,6 +198,7 @@ def main():
                 # Subsequent blocks and track changes keep the quiet speed.
                 request_speed(set_speed, drive, speed, 'playback')
                 quiet_pending = False
+            pacer.finish(started, len(data) // 2352)
             sys.stdout.buffer.write(struct.pack('<I', len(data)) + data)
             sys.stdout.buffer.flush()
     finally:

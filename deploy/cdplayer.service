@@ -12,7 +12,7 @@ CacheDirectory=cdplayer
 Environment=XDG_CACHE_HOME=/var/cache
 EnvironmentFile=-/etc/cdplayer/spotify.conf
 EnvironmentFile=-/etc/cdplayer/music.conf
-ExecStart=/usr/local/bin/cdplayer -device auto -mpd 127.0.0.1:6601
+ExecStart=/usr/local/bin/cdplayer -device auto -mpd 127.0.0.1:6601 -audio-cache
 Restart=on-failure
 RestartSec=3
 TimeoutStopSec=15

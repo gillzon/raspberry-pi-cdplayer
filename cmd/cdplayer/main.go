@@ -39,7 +39,7 @@ func main() {
 	device := flag.String("device", "auto", "CD drive: auto detects the single connected drive, or an absolute /dev path")
 	address := flag.String("mpd", "127.0.0.1:6600", "MPD TCP address (use port 6601 for the optional dedicated instance)")
 	checkAudio := flag.Bool("check-audio", false, "check persistent CD reader dependencies without opening the drive")
-	cachedAudio := flag.Bool("audio-cache", false, "enable the optional background CD reader and WAV cache")
+	cachedAudio := flag.Bool("audio-cache", true, "use the persistent quiet CD reader and WAV cache (false lets MPD read the drive directly)")
 	verifyAudio := flag.Bool("audio-verify", false, "enable slower software audio verification and repair for difficult discs")
 	cdSpeed := flag.Int("cd-speed", audio.DefaultReadSpeed, "request CD read speed multiplier for cached audio (default 2 for quiet playback; 0 leaves drive default)")
 	cdStartupSpeed := flag.Int("cd-startup-speed", audio.DefaultStartupSpeed, "request startup CD speed for cached audio before switching to cd-speed (0 disables boost)")
@@ -83,6 +83,15 @@ func main() {
 	if *spotifyEnabled && *httpAddress == "" {
 		slog.Error("Spotify requires the web interface")
 		os.Exit(2)
+	}
+	if *cachedAudio {
+		if err := audio.Check(); err != nil {
+			slog.Error("quiet CD playback unavailable", "error", err)
+			os.Exit(1)
+		}
+		slog.Info("CD reader configuration", "audio_cache", true, "startup_speed", *cdStartupSpeed, "playback_speed", *cdSpeed, "paced_reads", *cdSpeed > 0)
+	} else {
+		slog.Warn("direct MPD CD playback selected; quiet speed and cache pacing are disabled")
 	}
 	receiver := &spotify.Manager{Binary: envDefault("CDPLAYER_SPOTIFY_BINARY", "librespot"), Device: *spotifyDevice, State: spotify.State{Enabled: *spotifyEnabled, Name: *spotifyName}}
 	defer receiver.Stop()
@@ -295,6 +304,8 @@ func main() {
 		selectedDevice = drive.DevicePath()
 		state := web.State{Outputs: outputs, Source: controller.Source(), Network: monitor.Snapshot().Network, Spotify: receiver.State, Device: selectedDevice, Disc: controller.Disc(), MPD: backend.Status(), Updated: time.Now()}
 		screen.update(state.Updated, state)
+		state.AudioCacheEnabled = audioCache != nil
+		state.CDReadSpeed, state.CDStartupSpeed = *cdSpeed, *cdStartupSpeed
 		state.ScreenAsleep = screen.asleep
 		if controller.Source() == "radio" {
 			station := selectedStation

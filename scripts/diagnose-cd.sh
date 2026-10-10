@@ -18,6 +18,18 @@ section 'Account and optical-drive group'
 id cdplayer || true
 getent group cdrom || true
 
+section 'Running CD reader settings (does not open the drive)'
+python3 - <<'PY'
+import json, urllib.request
+try:
+    with urllib.request.urlopen('http://127.0.0.1:8080/api/status', timeout=3) as response:
+        state = json.load(response)
+    for key in ('audio_cache_enabled', 'cd_startup_speed', 'cd_read_speed'):
+        print(f'{key}: {state.get(key, "unavailable; update the player")}')
+except Exception as error:
+    print(f'Player status unavailable: {error}')
+PY
+
 section 'Optical devices and current permissions'
 shopt -s nullglob
 optical_count=0
@@ -29,6 +41,12 @@ for block_path in /sys/class/block/*; do
     device_node="/dev/${block_path##*/}"
     stat -c '%n permissions=%A mode=%a owner=%U(%u) group=%G(%g)' "$device_node" || true
     readlink -f "$block_path/device"
+    for field in vendor model rev; do
+        if [[ -r "$block_path/device/$field" ]]; then
+            printf '%s: ' "$field"
+            cat "$block_path/device/$field"
+        fi
+    done
     if command -v getfacl >/dev/null 2>&1; then
         getfacl --absolute-names "$device_node" || true
     fi

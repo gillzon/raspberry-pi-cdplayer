@@ -56,6 +56,11 @@ echo "Building and testing $(git rev-parse --short HEAD)…"
 go test ./...
 python3 -m unittest discover -s internal/library -p '*_test.py'
 go build -trimpath -o "$build_dir/cdplayer" ./cmd/cdplayer
+if ! "$build_dir/cdplayer" -check-audio; then
+    echo 'Quiet CD playback needs the reader libraries. Run: sudo apt install cd-paranoia' >&2
+    echo 'The installed player has not been replaced.' >&2
+    exit 1
+fi
 cp deploy/cdplayer-system-mpd.service "$build_dir/cdplayer.service"
 
 # Fetch and compile as the checkout owner; privilege is only needed to install.
@@ -102,6 +107,26 @@ if ! systemctl is-active --quiet cdplayer.service; then
     echo "If a previous binary existed, it is saved at /usr/local/bin/cdplayer.previous." >&2
     exit 1
 fi
+python3 - <<'PY'
+import json, time, urllib.request
+deadline = time.monotonic() + 15
+while True:
+    try:
+        with urllib.request.urlopen('http://127.0.0.1:8080/api/status', timeout=2) as response:
+            state = json.load(response)
+        if state.get('updated', '').startswith('0001-'):
+            raise RuntimeError('player is still starting')
+        break
+    except Exception as error:
+        if time.monotonic() >= deadline:
+            raise SystemExit(f'Player restarted, but could not verify quiet CD mode: {error}')
+        time.sleep(.5)
+if not state.get('audio_cache_enabled') or state.get('cd_read_speed', 0) <= 0:
+    raise SystemExit('Player restarted, but quiet CD mode is disabled by the service configuration. '
+                     'Check systemctl cat cdplayer for an override with -audio-cache=false or -cd-speed 0.')
+print(f"Quiet CD mode active: {state['cd_startup_speed']}x startup request, "
+      f"{state['cd_read_speed']}x playback request and paced caching.")
+PY
 echo "Updated to $(git rev-parse --short HEAD). CD player is running and enabled at boot."
 echo "Web UI: http://raspberrypi.local:8080 (or use the Pi's IP address)."
 }
