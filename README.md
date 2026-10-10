@@ -599,7 +599,8 @@ view: album art, song title, artist, album, source, and four CD controls
 debouncing as the main web UI. Spotify artwork and track information appear
 while Spotify is selected; Spotify playback controls remain on the phone.
 After Spotify disconnects, Play becomes available without automatically starting
-the CD. The full web interface remains at `/`.
+the CD. The touch display hides the mouse pointer, including over its buttons.
+The full web interface remains at `/`.
 
 This is a browser view, not a TFT driver. Display output, touch calibration,
 physical GPIO key mapping depend on the exact HAT model and installed Raspberry

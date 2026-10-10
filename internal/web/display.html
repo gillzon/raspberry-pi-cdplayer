@@ -5,7 +5,7 @@
 <title>Player display</title>
 <style>
 :root{color-scheme:light;font:15px "Avenir Next","Segoe UI",system-ui,sans-serif;background:#f7f7f5;color:#0a0a0a}
-*{box-sizing:border-box}
+*{box-sizing:border-box;cursor:none}
 html{margin:0;overflow:hidden}
 body{margin:0;width:min(320px,100vw);height:min(240px,100dvh);overflow:hidden;padding:8px;display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:32px minmax(0,1fr) 14px 16px 44px;gap:6px;background:linear-gradient(90deg,#deded930 1px,transparent 1px),linear-gradient(#deded930 1px,transparent 1px);background-size:24px 24px}
 body>*{min-width:0;min-height:0}
@@ -25,14 +25,14 @@ p{margin:3px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #album{font-size:10px;color:#666663}
 #message{font-size:10px;color:#666663;margin:0;align-self:center}
 .controls{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:7px}
-button{min-width:0;display:grid;place-items:center;border:1px solid #deded9;border-radius:12px;background:#fdfdfc;color:#171717;touch-action:manipulation;padding:0;cursor:pointer;-webkit-tap-highlight-color:transparent}
+button{min-width:0;display:grid;place-items:center;border:1px solid #deded9;border-radius:12px;background:#fdfdfc;color:#171717;touch-action:manipulation;padding:0;-webkit-tap-highlight-color:transparent}
 button svg{width:23px;height:23px;pointer-events:none}
 header button{width:32px;height:32px;flex-shrink:0;border-radius:50%}
 header button svg{width:18px;height:18px}
 #play{background:#0a0a0a;border-color:#0a0a0a;color:#fff}
 button:active:not(:disabled){background:#deded9;transform:scale(.95)}
 #play:active:not(:disabled){background:#292929}
-button:disabled{opacity:.35;cursor:default}
+button:disabled{opacity:.35}
 button:focus-visible{outline:2px solid #0a0a0a;outline-offset:-4px}
 #play:focus-visible{outline-color:#fff}
 .timeline{display:flex;align-items:center;gap:8px;overflow:hidden}
