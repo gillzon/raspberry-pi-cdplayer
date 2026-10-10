@@ -595,7 +595,8 @@ information clears on disconnect and changes with each track.
 
 `http://<pi-address>:8080/display` provides a compact landscape 320×240 touch
 view: album art, song title, artist, album, source, and four CD controls
-(Previous, Pause, Play, Next). It uses the same playback controller and navigation
+(Previous, Pause, Play/Stop, Next). The Play button becomes Stop while music is
+playing and returns to Play when stopped or paused. It uses the same playback controller and navigation
 debouncing as the main web UI. Spotify artwork and track information appear
 while Spotify is selected; Spotify playback controls remain on the phone.
 After Spotify disconnects, Play becomes available without automatically starting
@@ -607,7 +608,7 @@ physical GPIO key mapping depend on the exact HAT model and installed Raspberry
 Pi OS/display stack. For the configured Waveshare/X11 setup, kiosk startup and
 a branded boot splash can be installed as described below.
 Preview with a 320×240 browser viewport. Keyboard equivalents for testing are
-Left/Right arrows (previous/next), P (pause), and Enter (play); these do not read
+Left/Right arrows (previous/next), P (pause), and Enter (play/stop); these do not read
 GPIO buttons. Do not guess GPIO pins from the screen size alone.
 
 ### Automatic screen sleep and manual sleep
