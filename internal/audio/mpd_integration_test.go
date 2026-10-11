@@ -3,12 +3,14 @@ package audio
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -81,8 +83,16 @@ func TestRealMPDStartsAndChangesCachedTracks(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	wake := make(chan struct{}, 1)
+	var failNext atomic.Bool
 	cache := &Cache{Root: filepath.Join(root, "cache"), ReadyNotify: wake,
-		Open: func(ctx context.Context, _ string, _ []Layout) (Reader, error) { return pacedTestReader{ctx}, nil }}
+		Open: func(ctx context.Context, _ string, _ []Layout) (Reader, error) {
+			return recoveryReader{read: func(start, count int) ([]byte, error) {
+				if failNext.Swap(false) {
+					return nil, io.ErrUnexpectedEOF
+				}
+				return (pacedTestReader{ctx}).Read(start, count)
+			}}, nil
+		}}
 	server := httptest.NewServer(cache)
 	defer server.Close()
 	defer cache.Shutdown()
@@ -117,6 +127,14 @@ func TestRealMPDStartsAndChangesCachedTracks(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitPlaying("0", started)
+	failNext.Store(true)
+	waitCache(t, cache, func(s Status) bool { return s.RecoveryAttempts == 1 && !s.Recovering })
+	if err := client.PlaybackError(); err != nil {
+		t.Fatal(err)
+	}
+	if status := client.Status(); status["state"] != "play" || status["song"] != "0" {
+		t.Fatalf("recovery interrupted MPD: %v", status)
+	}
 	started = time.Now()
 	cache.Select(3) // The hardware navigation path must do this before MPD play.
 	if err := client.Control("track", 1); err != nil {

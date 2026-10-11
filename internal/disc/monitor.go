@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/gillzon/raspberry-pi-cdplayer/internal/driveio"
 )
 
 // Monitor isolates potentially blocking drive status/TOC ioctls from controls.
@@ -34,10 +36,24 @@ type monitoredDrive interface {
 }
 
 func NewMonitor(ctx context.Context, d monitoredDrive, interval time.Duration) *Monitor {
+	return NewCoordinatedMonitor(ctx, d, interval, nil)
+}
+
+func NewCoordinatedMonitor(ctx context.Context, d monitoredDrive, interval time.Duration, access *driveio.Access) *Monitor {
 	m := &Monitor{Updates: make(chan struct{}, 1), ctx: ctx, err: fmt.Errorf("detecting CD drive"), eject: make(chan ejectRequest), refresh: make(chan struct{}, 1)}
 	go func() {
 		ejectedID := ""
-		sample := func() time.Duration {
+		sample := func(refresh bool) time.Duration {
+			release, err := access.Acquire(ctx)
+			if err != nil {
+				return interval
+			}
+			defer release()
+			if refresh {
+				if invalidator, ok := d.(interface{ InvalidateTOC() }); ok {
+					invalidator.InvalidateTOC()
+				}
+			}
 			started := time.Now()
 			m.mu.Lock()
 			m.probeStarted = started
@@ -80,23 +96,26 @@ func NewMonitor(ctx context.Context, d monitoredDrive, interval time.Duration) *
 		}
 		// Start the timer after the physical call completes: a ticker queues
 		// ticks during slow I/O and can otherwise cause back-to-back probes.
-		timer := time.NewTimer(sample())
+		timer := time.NewTimer(sample(false))
 		defer timer.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-timer.C:
-				timer.Reset(sample())
+				timer.Reset(sample(false))
 			case <-m.refresh:
-				if invalidator, ok := d.(interface{ InvalidateTOC() }); ok {
-					invalidator.InvalidateTOC()
-				}
-				timer.Reset(sample())
+				timer.Reset(sample(true))
 			case r := <-m.eject:
 				err := r.ctx.Err()
+				release := func() {}
 				if err == nil {
-					err = d.Eject()
+					var acquired func()
+					acquired, err = access.Acquire(r.ctx)
+					if err == nil {
+						release = acquired
+						err = d.Eject()
+					}
 				}
 				if err == nil {
 					m.mu.Lock()
@@ -113,6 +132,7 @@ func NewMonitor(ctx context.Context, d monitoredDrive, interval time.Duration) *
 					default:
 					}
 				}
+				release()
 				r.done <- err
 			}
 		}

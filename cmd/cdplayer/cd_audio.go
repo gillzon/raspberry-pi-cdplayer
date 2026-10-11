@@ -26,6 +26,7 @@ func controlCachedAudio(cache *audio.Cache, backend cdPlaybackBackend, action st
 	}
 	wasPaused := cache.Status().Paused
 	if action == "play" || action == "track" {
+		cache.Retry()
 		cache.SetPaused(false)
 	}
 	if err := backend.Control(action, position); err != nil {
@@ -34,6 +35,26 @@ func controlCachedAudio(cache *audio.Cache, backend cdPlaybackBackend, action st
 	}
 	if action == "pause" || action == "stop" {
 		cache.SetPaused(true)
+	}
+	return nil
+}
+
+type recoveryDrive interface {
+	Read() (disc.Disc, error)
+	DevicePath() string
+}
+
+// Called only under shared drive access, after the failed helper has exited.
+func validateRecoveryDisc(d recoveryDrive, device, id string) error {
+	if invalidator, ok := d.(interface{ InvalidateTOC() }); ok {
+		invalidator.InvalidateTOC()
+	}
+	current, err := d.Read()
+	if err != nil {
+		return fmt.Errorf("verify CD before reader recovery: %w", err)
+	}
+	if current.ID != id || d.DevicePath() != device {
+		return audio.ErrDiscChanged
 	}
 	return nil
 }

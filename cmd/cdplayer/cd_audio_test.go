@@ -17,6 +17,30 @@ type handoffBackend struct {
 	clears              int
 }
 
+type recoveryTestDrive struct {
+	current     disc.Disc
+	fresh       disc.Disc
+	path        string
+	invalidated bool
+}
+
+func (d *recoveryTestDrive) InvalidateTOC()           { d.invalidated = true; d.current = d.fresh }
+func (d *recoveryTestDrive) Read() (disc.Disc, error) { return d.current, nil }
+func (d *recoveryTestDrive) DevicePath() string       { return d.path }
+
+func TestRecoveryValidatesFreshDiscAndDevice(t *testing.T) {
+	for _, tc := range []struct {
+		id, path string
+		changed  bool
+	}{{"original", "/dev/sr0", false}, {"replacement", "/dev/sr0", true}, {"original", "/dev/sr1", true}, {"", "/dev/sr0", true}} {
+		d := &recoveryTestDrive{current: disc.Disc{ID: "original"}, fresh: disc.Disc{ID: tc.id}, path: tc.path}
+		err := validateRecoveryDisc(d, "/dev/sr0", "original")
+		if !d.invalidated || errors.Is(err, audio.ErrDiscChanged) != tc.changed {
+			t.Fatalf("%+v: invalidated=%v err=%v", tc, d.invalidated, err)
+		}
+	}
+}
+
 type audioControlFunc func(string, int) error
 
 func (f audioControlFunc) Control(action string, position int) error { return f(action, position) }

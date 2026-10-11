@@ -90,7 +90,7 @@ async function refresh(){
   $('progress').hidden=radio;$('progress').max=spotify?(now.duration_ms||1):(Number(m.duration)||1);$('progress').value=spotify?(now.position_ms||0):idle?0:Number(m.elapsed)||0;
   document.querySelector('[data-action=pause]').textContent=radio?'Stop radio':'Pause';
   $('error').textContent=s.selection?.error||s.audio?.error||s.error||m.error||'';
-  $('details').textContent=radio?'Internet Radio':usb?'USB Music':s.device+(s.disc.ID?' · Disc '+s.disc.ID.slice(0,12):'')+(s.audio?.total_bytes?' · Audio cached '+Math.round(100*s.audio.cached_bytes/s.audio.total_bytes)+'%':'');
+  $('details').textContent=radio?'Internet Radio':usb?'USB Music':s.device+(s.disc.ID?' · Disc '+s.disc.ID.slice(0,12):'')+(s.audio?.total_bytes?' · Audio cached '+Math.round(100*s.audio.cached_bytes/s.audio.total_bytes)+'%':'')+(s.source==='cd'&&s.audio?.recovering?' · Retrying CD read…':'');
   $('tracks').hidden=radio||usb||spotify||idle;$('tracksHeading').hidden=radio||usb||spotify||idle;
   const key=JSON.stringify([tracks,names]);
   if(key!==trackKey){$('tracks').replaceChildren(...tracks.map(n=>{const b=document.createElement('button');b.textContent=names[n]?.title?n+'. '+names[n].title+(names[n].artist?' · '+names[n].artist:''):'Track '+n;b.dataset.track=n;b.onclick=()=>control('track',n);return b}));trackKey=key}

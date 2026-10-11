@@ -19,6 +19,7 @@ import (
 
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/audio"
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/disc"
+	"github.com/gillzon/raspberry-pi-cdplayer/internal/driveio"
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/library"
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/metadata"
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/mpd"
@@ -130,7 +131,8 @@ func main() {
 	if *device == "auto" {
 		rawDrive = &disc.AutoDrive{}
 	}
-	drive := disc.NewMonitor(ctx, rawDrive, *poll)
+	access := driveio.New()
+	drive := disc.NewCoordinatedMonitor(ctx, rawDrive, *poll, access)
 	controller := &player.Controller{Drive: drive, Backend: backend}
 	var audioCache *audio.Cache
 	audioReady := make(chan struct{}, 1)
@@ -150,6 +152,11 @@ func main() {
 			root = filepath.Join(*cacheDir, "audio")
 		}
 		audioCache = &audio.Cache{Root: root, BaseURL: "http://" + audioListener.Addr().String(), Open: audio.ReaderWithSpeedProfile(*verifyAudio, *cdSpeed, *cdStartupSpeed)}
+		audioCache.Access = access
+		audioCache.RecoveryOpen = audio.ReaderWithSpeedProfile(*verifyAudio, *cdSpeed, 0)
+		audioCache.ValidateRecovery = func(device, id string) error {
+			return validateRecoveryDisc(rawDrive, device, id)
+		}
 		audioCache.ReadyNotify = audioReady
 		if err := audioCache.Init(); err != nil {
 			audioListener.Close()
@@ -602,9 +609,18 @@ func main() {
 					// pending autoplay until the user presses Play again.
 					err = controller.UseIdle(request.ctx)
 				} else if audioCache != nil && request.command.Action == "play" && audioCache.Status().Error != "" {
-					// Manual Play retries the reader instead of replaying broken URLs.
-					audioCache.Close()
-					controller.UseCD()
+					if audioCache.Retry() {
+						// Keep the playlist and good blocks. If first audio never
+						// arrived, Step will start playback when recovery produces it.
+						audioCache.SetPaused(false)
+						if audioCache.Ready() == nil {
+							err = controlCachedAudio(audioCache, backend, "play", position)
+						}
+					} else {
+						// Fatal preparation/layout failures require a new session.
+						audioCache.Close()
+						controller.UseCD()
+					}
 				} else if audioCache != nil && request.command.Action != "stop" && audioCache.Ready() != nil {
 					err = audioCache.Ready()
 				} else {

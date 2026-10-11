@@ -4,14 +4,110 @@ import (
 	"context"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/gillzon/raspberry-pi-cdplayer/internal/driveio"
 )
 
 type slowMonitoredDrive struct {
 	started chan struct{}
 	unblock chan struct{}
 	once    sync.Once
+}
+
+type coordinatedEjectDrive struct{ ejected atomic.Bool }
+
+func (d *coordinatedEjectDrive) Read() (Disc, error) { return Disc{ID: "disc"}, nil }
+func (d *coordinatedEjectDrive) DevicePath() string  { return "/dev/fake" }
+func (d *coordinatedEjectDrive) Eject() error        { d.ejected.Store(true); return nil }
+
+func TestCancelledEjectCannotRunLaterBehindReader(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	access := driveio.New()
+	d := &coordinatedEjectDrive{}
+	m := NewCoordinatedMonitor(ctx, d, time.Hour, access)
+	select {
+	case <-m.Updates:
+	case <-time.After(time.Second):
+		t.Fatal("monitor did not start")
+	}
+	finishRead, _ := access.Acquire(ctx)
+	requestCtx, stop := context.WithTimeout(ctx, 20*time.Millisecond)
+	defer stop()
+	done := make(chan error, 1)
+	m.eject <- ejectRequest{ctx: requestCtx, done: done}
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("eject ignored access deadline")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("eject waited indefinitely")
+	}
+	finishRead()
+	if d.ejected.Load() {
+		t.Fatal("expired eject touched drive")
+	}
+	if err := m.Eject(); err != nil {
+		t.Fatal(err)
+	}
+	if !d.ejected.Load() {
+		t.Fatal("eject did not resume after reader release")
+	}
+}
+
+func TestCoordinatedProbeWaitsForReaderAndInvalidatesBeforeRelease(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	access := driveio.New()
+	finishRead, err := access.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := &controlledProbe{starts: make(chan struct{}, 1), release: make(chan struct{}, 1), ctx: ctx}
+	m := NewCoordinatedMonitor(ctx, d, time.Hour, access)
+	observerStarted, observerDone := make(chan struct{}), make(chan struct{})
+	m.SetObserver(func(Disc, error) { close(observerStarted); <-observerDone })
+	select {
+	case <-d.starts:
+		t.Fatal("probe overlapped audio read")
+	case <-time.After(20 * time.Millisecond):
+	}
+	m.mu.RLock()
+	started := m.probeStarted
+	m.mu.RUnlock()
+	if !started.IsZero() {
+		t.Fatal("waiting for access counted as physical probe time")
+	}
+	finishRead()
+	select {
+	case <-d.starts:
+	case <-time.After(time.Second):
+		t.Fatal("probe starved by reader")
+	}
+	d.release <- struct{}{}
+	select {
+	case <-observerStarted:
+	case <-time.After(time.Second):
+		t.Fatal("no media notification")
+	}
+	deadline, stop := context.WithTimeout(ctx, 20*time.Millisecond)
+	defer stop()
+	if release, err := access.Acquire(deadline); err == nil {
+		release()
+		t.Fatal("read could start before old cache invalidation")
+	}
+	close(observerDone)
+	deadline2, stop2 := context.WithTimeout(ctx, time.Second)
+	defer stop2()
+	release, err := access.Acquire(deadline2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
 }
 
 func (d *slowMonitoredDrive) Read() (Disc, error) {

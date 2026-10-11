@@ -80,7 +80,7 @@ function render(s){
  const url=radio?'':usb?(s.usb?.cover_url||''):spotify?(sp.now?.cover||''):cd?(meta.cover_url||''):'';
  $('placeholder').textContent=radio?'RADIO':usb?'USB':'♫';
  if(url!==coverURL){coverURL=url;$('cover').hidden=true;$('placeholder').hidden=false;if(url)$('cover').src=url;else $('cover').removeAttribute('src')}
- $('message').textContent=(busy&&pendingAction==='usb-mix'?'Preparing USB shuffle…':failure)||(cd&&(s.selection?.error||s.audio?.error))||s.error||(radio?'Next / Previous changes station':usb?(s.usb_mix?'USB Music · shuffled':'USB Music'):spotify?'Control Spotify from your phone':idle?'CD will stay stopped until you press Play':cd?(meta.message||''):'');
+ $('message').textContent=(busy&&pendingAction==='usb-mix'?'Preparing USB shuffle…':failure)||(cd&&(s.selection?.error||s.audio?.error))||s.error||(cd&&s.audio?.recovering?'Retrying CD read…':'')||(radio?'Next / Previous changes station':usb?(s.usb_mix?'USB Music · shuffled':'USB Music'):spotify?'Control Spotify from your phone':idle?'CD will stay stopped until you press Play':cd?(meta.message||''):'');
  $('message').title=$('message').textContent;
  const total=radio||idle||selecting?0:seconds(spotify?sp.now?.duration_ms/1000:m.duration||(usb?s.usb?.duration:0));
  const elapsed=idle||selecting?0:seconds(spotify?sp.now?.position_ms/1000:m.elapsed);

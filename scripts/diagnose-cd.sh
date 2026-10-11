@@ -26,6 +26,10 @@ try:
         state = json.load(response)
     for key in ('audio_cache_enabled', 'cd_startup_speed', 'cd_read_speed'):
         print(f'{key}: {state.get(key, "unavailable; update the player")}')
+    audio = state.get('audio') or {}
+    for key in ('paused', 'recovering', 'recovery_attempts', 'cached_bytes', 'total_bytes', 'last_read_error', 'error'):
+        if key in audio:
+            print(f'audio.{key}: {audio[key]}')
 except Exception as error:
     print(f'Player status unavailable: {error}')
 PY

@@ -1013,8 +1013,13 @@ The reader API is described in the [libcdio documentation](https://libcdio.githu
   Stop, eject, and source changes cancel waiting track selections.
   Physical Next/Previous also prioritize the target cache track before asking
   MPD to play it, so a new track does not wait for the old one to finish caching.
-- A background monitor owns drive-status probes, so slow probe ioctls do not
-  block web controls. The normal disc-ID guard still rejects stale selections.
+- In cached mode, drive-status probes, reader initialization (including speed
+  requests), audio reads, recovery checks, and eject share exclusive drive
+  access. Status checks run between audio blocks instead of issuing commands
+  concurrently with a read. Waiting for access does not consume the helper's
+  read timeout or count as a slow physical probe. The monitor invalidates old
+  media before releasing access to the next reader operation. Web controls and
+  cached HTTP audio remain independent of this physical-operation queue.
 - The cache lives under `<cache-dir>/audio`, normally
   `/var/cache/cdplayer/audio` for the service. Budget about **850 MB for an
   80-minute disc**, plus filesystem overhead. Use `-cache-dir` to choose storage;
@@ -1024,10 +1029,25 @@ The reader API is described in the [libcdio documentation](https://libcdio.githu
   the session cache. Obsolete session directories from a crash are cleaned on
   the next start. A fully cached disc releases its reader but retains audio until
   the session ends. Reinsertion or returning from Spotify starts a fresh cache.
-- The web UI shows the audio cache percentage and reader errors. A read failure
-  is surfaced instead of returning unfilled file data as silence. Correct the
-  underlying error and reinsert the disc to retry. A stalled helper operation has
-  a 30-second deadline; drive monitoring stays independently responsive.
+- A read failure allows at most **two automatic reader reopen attempts per disc
+  session**. The failed helper must exit first. Recovery freshly checks the
+  device and disc ID, validates the track layout, and uses the quiet playback
+  speed without the startup boost. Cached blocks and track URLs survive, so MPD
+  can continue consuming available audio while missing blocks wait for recovery.
+  Pause/Stop suspend further recovery work; removal, eject, source changes, and
+  shutdown cancel it. A read or initialization already in progress may finish.
+- After automatic attempts are exhausted, missing blocks return a read error;
+  the cache never fills them with silence. Good blocks remain available. Press
+  Play or explicitly select a track to request another bounded attempt sequence
+  without discarding the cache. Disc/layout changes, invalid reader responses,
+  and cache-storage failures are fatal and require a new session.
+- The UI shows “Retrying CD read…” during recovery. `/api/status` exposes
+  `audio.recovering`, `audio.recovery_attempts`, and `audio.last_read_error`
+  alongside cached bytes and terminal errors. A stalled helper operation still
+  has a 30-second cancellation deadline. Linux may delay process exit during
+  blocked device I/O; exclusive access is retained until it actually exits, so
+  recovery cannot pile new commands onto a stuck drive. Serialization and
+  retries cannot guarantee recovery from a damaged disc or faulty drive/USB link.
 
 Cached track changes avoid optical reads. First insertion and uncached seeks
 still depend on spin-up, disc condition, and drive speed; no fixed playback

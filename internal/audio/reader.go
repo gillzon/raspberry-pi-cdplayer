@@ -35,6 +35,8 @@ type Layout struct {
 }
 type Reader interface {
 	Read(int, int) ([]byte, error)
+	// Close must wait for pending physical I/O and helper exit. Returning an
+	// error reports the exit status, not permission to leave I/O running.
 	Close() error
 }
 type OpenReader func(context.Context, string, []Layout) (Reader, error)

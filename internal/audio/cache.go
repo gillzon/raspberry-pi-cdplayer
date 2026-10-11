@@ -18,6 +18,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/gillzon/raspberry-pi-cdplayer/internal/driveio"
 )
 
 const sectorBytes = 2352
@@ -27,6 +29,7 @@ const sectorBytes = 2352
 const blockSectors = 15
 
 var ErrPreparing = errors.New("preparing CD audio reader")
+var ErrDiscChanged = errors.New("CD changed during reader recovery")
 
 type track struct {
 	layout Layout
@@ -34,11 +37,14 @@ type track struct {
 	ready  []bool
 }
 type Status struct {
-	DiscID      string `json:"disc_id"`
-	Paused      bool   `json:"paused"`
-	CachedBytes int64  `json:"cached_bytes"`
-	TotalBytes  int64  `json:"total_bytes"`
-	Error       string `json:"error"`
+	DiscID           string `json:"disc_id"`
+	Paused           bool   `json:"paused"`
+	Recovering       bool   `json:"recovering"`
+	RecoveryAttempts int    `json:"recovery_attempts"`
+	LastReadError    string `json:"last_read_error,omitempty"`
+	CachedBytes      int64  `json:"cached_bytes"`
+	TotalBytes       int64  `json:"total_bytes"`
+	Error            string `json:"error"`
 }
 type Cache struct {
 	lock          *os.File
@@ -49,6 +55,13 @@ type Cache struct {
 	Root          string
 	BaseURL       string
 	Open          OpenReader
+	// RecoveryOpen validates the disc and reopens at quiet speed. If unset,
+	// Open is reused (and must validate the supplied layout on every open).
+	RecoveryOpen OpenReader
+	Access       *driveio.Access
+	// ValidateRecovery runs under Access before reopening a failed reader.
+	// It must freshly check the device and disc ID without acquiring Access again.
+	ValidateRecovery func(device, discID string) error
 	// ReadyNotify receives a nonblocking notification when first audio is cached.
 	// Set before Observe; a buffered channel avoids losing the wake-up.
 	ReadyNotify chan<- struct{}
@@ -65,6 +78,11 @@ type session struct {
 	demand         map[*track]int
 	changed        chan struct{}
 	err            error
+	readErr        error
+	recovering     bool
+	attempts       int
+	lastReadError  string
+	retry          chan struct{}
 	cached, total  int64
 }
 
@@ -112,7 +130,7 @@ func (c *Cache) Observe(id, device string, layout []Layout) error {
 		os.RemoveAll(dir)
 		return err
 	}
-	s := &session{ctx: ctx, cancel: cancel, done: make(chan struct{}), id: id, token: hex.EncodeToString(token), dir: dir, demand: make(map[*track]int), changed: make(chan struct{})}
+	s := &session{ctx: ctx, cancel: cancel, done: make(chan struct{}), id: id, token: hex.EncodeToString(token), dir: dir, demand: make(map[*track]int), changed: make(chan struct{}), retry: make(chan struct{}, 1)}
 	cleanup := func() {
 		cancel()
 		for _, t := range s.tracks {
@@ -146,11 +164,16 @@ func (c *Cache) Observe(id, device string, layout []Layout) error {
 	}
 	c.workers.Add(1)
 	readyNotify := c.ReadyNotify
+	reopen, access := c.RecoveryOpen, c.Access
+	validate := c.ValidateRecovery
+	if reopen == nil {
+		reopen = opener
+	}
 	go func() {
 		defer c.workers.Done()
 		defer close(s.done)
 		defer cleanup()
-		s.run(device, layout, opener, readyNotify)
+		s.run(device, layout, opener, reopen, access, validate, readyNotify)
 	}()
 	return nil
 }
@@ -164,7 +187,8 @@ func (c *Cache) Close() {
 }
 
 // Ready prevents publishing a playlist until the reader has validated the TOC
-// and produced audio. A failed session remains failed until explicitly retried.
+// and produced audio. Recoverable read failures do not invalidate good blocks;
+// fatal media/layout/storage failures still stop the controller's playlist.
 func (c *Cache) Ready() error {
 	c.mu.Lock()
 	s := c.session
@@ -178,6 +202,9 @@ func (c *Cache) Ready() error {
 		return s.err
 	}
 	if s.cached == 0 {
+		if s.readErr != nil {
+			return s.readErr
+		}
 		return ErrPreparing
 	}
 	return nil
@@ -235,9 +262,11 @@ func (c *Cache) Status() Status {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	v := Status{DiscID: s.id, Paused: s.paused, CachedBytes: s.cached, TotalBytes: s.total}
+	v := Status{DiscID: s.id, Paused: s.paused, CachedBytes: s.cached, TotalBytes: s.total, Recovering: s.recovering, RecoveryAttempts: s.attempts, LastReadError: s.lastReadError}
 	if s.err != nil {
 		v.Error = s.err.Error()
+	} else if s.readErr != nil {
+		v.Error = s.readErr.Error()
 	}
 	return v
 }
@@ -249,6 +278,7 @@ func (s *session) fail(err error) {
 		return // Disc removal, source switching and shutdown cancel intentionally.
 	}
 	s.err = err
+	s.recovering = false
 	s.signal()
 	s.mu.Unlock()
 	slog.Error("CD audio cache failed", "error", err)
@@ -273,9 +303,10 @@ func (s *session) waitActive() error {
 	}
 }
 
-func (s *session) run(device string, layout []Layout, open OpenReader, readyNotify chan<- struct{}) {
+func (s *session) run(device string, layout []Layout, open, reopen OpenReader, access *driveio.Access, validate func(string, string) error, readyNotify chan<- struct{}) {
 	started := time.Now()
-	r, err := open(s.ctx, device, layout)
+	r := &sessionReader{s: s, access: access, device: device, layout: layout, reopen: reopen, validate: validate}
+	err := r.open(open)
 	if err != nil {
 		s.fail(err)
 		<-s.ctx.Done()
@@ -283,11 +314,7 @@ func (s *session) run(device string, layout []Layout, open OpenReader, readyNoti
 	}
 	opened := time.Now()
 	slog.Info("CD audio reader opened", "device", device, "duration", opened.Sub(started))
-	defer func() {
-		if r != nil {
-			r.Close()
-		}
-	}()
+	defer r.close()
 	for {
 		if s.waitActive() != nil {
 			return
@@ -345,28 +372,24 @@ func (s *session) run(device string, layout []Layout, open OpenReader, readyNoti
 		s.mu.Unlock()
 		if target == nil {
 			// Preserve the completed cache while releasing the drive and helper.
-			r.Close()
-			r = nil
+			r.close()
 			<-s.ctx.Done()
 			return
 		}
 		start := target.layout.Start + block*blockSectors
 		count := min(blockSectors, target.layout.End-start)
-		var data []byte
-		for len(data) < count*sectorBytes {
-			if s.waitActive() != nil {
-				return
+		data, err := r.readBlock(start, count)
+		if errors.Is(err, errReadPaused) {
+			continue
+		}
+		if err != nil && s.ctx.Err() != nil {
+			return
+		}
+		if err != nil && !errors.Is(err, ErrLayoutMismatch) && !errors.Is(err, ErrDiscChanged) && !errors.Is(err, errInvalidRead) {
+			if s.recoverRead(fmt.Errorf("cache CD track %d: %w", target.layout.Number, err)) {
+				continue
 			}
-			part, e := r.Read(start+len(data)/sectorBytes, count-len(data)/sectorBytes)
-			if e != nil {
-				err = e
-				break
-			}
-			if len(part) == 0 || len(part)%sectorBytes != 0 || len(part) > count*sectorBytes-len(data) {
-				err = fmt.Errorf("invalid audio read size")
-				break
-			}
-			data = append(data, part...)
+			return
 		}
 		if err == nil {
 			_, err = target.file.WriteAt(data, 44+int64(block*blockSectors*sectorBytes))
@@ -378,10 +401,15 @@ func (s *session) run(device string, layout []Layout, open OpenReader, readyNoti
 		}
 		s.mu.Lock()
 		firstAudio := s.cached == 0
+		wasRecovering := s.recovering
+		s.recovering, s.lastReadError = false, ""
 		target.ready[block] = true
 		s.cached += int64(len(data))
 		s.signal()
 		s.mu.Unlock()
+		if wasRecovering {
+			slog.Info("CD audio reader recovered", "track", target.layout.Number, "sector", start)
+		}
 		if firstAudio {
 			slog.Info("CD first audio cached", "device", device, "read_duration", time.Since(opened), "total_duration", time.Since(started))
 			select {
@@ -501,6 +529,9 @@ func (r *cachedReader) Read(p []byte) (int, error) {
 			}
 			s.mu.Lock()
 			ready, err, changed := t.ready[block], s.err, s.changed
+			if err == nil {
+				err = s.readErr
+			}
 			if !ready && err == nil {
 				s.demand[t] = block
 			}
