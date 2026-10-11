@@ -92,26 +92,22 @@ func (r *sessionReader) readBlock(start, count int) (data []byte, err error) {
 			r.reader = nil
 		}
 	}()
-	for len(data) < count*sectorBytes {
-		if err = r.s.ctx.Err(); err != nil {
-			return nil, err
-		}
-		r.s.mu.Lock()
-		paused = r.s.paused
-		r.s.mu.Unlock()
-		if paused {
-			return nil, errReadPaused
-		}
-		part, readErr := r.reader.Read(start+len(data)/sectorBytes, count-len(data)/sectorBytes)
-		if readErr != nil {
-			return nil, readErr
-		}
-		if len(part) == 0 || len(part)%sectorBytes != 0 || len(part) > count*sectorBytes-len(data) {
-			return nil, errInvalidRead
-		}
-		data = append(data, part...)
+	if err = r.s.ctx.Err(); err != nil {
+		return nil, err
 	}
-	return data, nil
+	r.s.mu.Lock()
+	paused = r.s.paused
+	r.s.mu.Unlock()
+	if paused {
+		return nil, errReadPaused
+	}
+	// Publish each valid short response before issuing another physical read.
+	// The cache tracks the prefix and requests only the missing sectors next.
+	data, err = r.reader.Read(start, count)
+	if len(data)%sectorBytes != 0 || len(data) > count*sectorBytes || (len(data) == 0 && err == nil) {
+		return nil, errInvalidRead
+	}
+	return data, err
 }
 
 func (s *session) recoverRead(err error) bool {

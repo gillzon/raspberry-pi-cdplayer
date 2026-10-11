@@ -1034,6 +1034,9 @@ The reader API is described in the [libcdio documentation](https://libcdio.githu
   device and disc ID, validates the track layout, and uses the quiet playback
   speed without the startup boost. Cached blocks and track URLs survive, so MPD
   can continue consuming available audio while missing blocks wait for recovery.
+  Valid short reads are saved and served immediately, even if they fill only
+  part of a block. Recovery starts at the first missing sector; it does not
+  discard or reread the good prefix. Missing sectors are never served as zeros.
   Pause/Stop suspend further recovery work; removal, eject, source changes, and
   shutdown cancel it. A read or initialization already in progress may finish.
 - After automatic attempts are exhausted, missing blocks return a read error;

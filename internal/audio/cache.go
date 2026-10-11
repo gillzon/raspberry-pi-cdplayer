@@ -35,6 +35,9 @@ type track struct {
 	layout Layout
 	file   *os.File
 	ready  []bool
+	// filled records the valid sector prefix in each block. Short reads are
+	// published immediately and must survive a later failure in the same block.
+	filled []int
 }
 type Status struct {
 	DiscID           string `json:"disc_id"`
@@ -145,6 +148,7 @@ func (c *Cache) Observe(id, device string, layout []Layout) error {
 			return e
 		}
 		t := &track{layout: l, file: f, ready: make([]bool, (l.End-l.Start+blockSectors-1)/blockSectors)}
+		t.filled = make([]int, len(t.ready))
 		s.tracks = append(s.tracks, t)
 		size := int64(l.End-l.Start) * sectorBytes
 		s.total += size
@@ -373,17 +377,57 @@ func (s *session) run(device string, layout []Layout, open, reopen OpenReader, a
 		if target == nil {
 			// Preserve the completed cache while releasing the drive and helper.
 			r.close()
+			s.mu.Lock()
+			s.recovering = false
+			s.signal()
+			s.mu.Unlock()
 			<-s.ctx.Done()
 			return
 		}
-		start := target.layout.Start + block*blockSectors
-		count := min(blockSectors, target.layout.End-start)
+		s.mu.Lock()
+		filled := target.filled[block]
+		s.mu.Unlock()
+		blockStart := target.layout.Start + block*blockSectors
+		blockCount := min(blockSectors, target.layout.End-blockStart)
+		start, count := blockStart+filled, blockCount-filled
 		data, err := r.readBlock(start, count)
+		if s.ctx.Err() != nil {
+			return
+		}
+		if len(data) > 0 {
+			n, writeErr := target.file.WriteAt(data, 44+int64((block*blockSectors+filled)*sectorBytes))
+			if writeErr == nil && n != len(data) {
+				writeErr = io.ErrShortWrite
+			}
+			if writeErr != nil {
+				s.fail(fmt.Errorf("cache CD track %d: %w", target.layout.Number, writeErr))
+				<-s.ctx.Done()
+				return
+			}
+			s.mu.Lock()
+			firstAudio := s.cached == 0
+			wasRecovering := s.recovering && err == nil
+			if err == nil {
+				s.recovering, s.lastReadError = false, ""
+			}
+			target.filled[block] += len(data) / sectorBytes
+			target.ready[block] = target.filled[block] == blockCount
+			s.cached += int64(len(data))
+			s.signal()
+			s.mu.Unlock()
+			if wasRecovering {
+				slog.Info("CD audio reader recovered", "track", target.layout.Number, "sector", start)
+			}
+			if firstAudio {
+				slog.Info("CD first audio cached", "device", device, "read_duration", time.Since(opened), "total_duration", time.Since(started))
+				select {
+				case readyNotify <- struct{}{}:
+				default:
+				}
+			}
+		}
 		if errors.Is(err, errReadPaused) {
 			continue
-		}
-		if err != nil && s.ctx.Err() != nil {
-			return
 		}
 		if err != nil && !errors.Is(err, ErrLayoutMismatch) && !errors.Is(err, ErrDiscChanged) && !errors.Is(err, errInvalidRead) {
 			if s.recoverRead(fmt.Errorf("cache CD track %d: %w", target.layout.Number, err)) {
@@ -391,31 +435,10 @@ func (s *session) run(device string, layout []Layout, open, reopen OpenReader, a
 			}
 			return
 		}
-		if err == nil {
-			_, err = target.file.WriteAt(data, 44+int64(block*blockSectors*sectorBytes))
-		}
 		if err != nil {
 			s.fail(fmt.Errorf("cache CD track %d: %w", target.layout.Number, err))
 			<-s.ctx.Done()
 			return
-		}
-		s.mu.Lock()
-		firstAudio := s.cached == 0
-		wasRecovering := s.recovering
-		s.recovering, s.lastReadError = false, ""
-		target.ready[block] = true
-		s.cached += int64(len(data))
-		s.signal()
-		s.mu.Unlock()
-		if wasRecovering {
-			slog.Info("CD audio reader recovered", "track", target.layout.Number, "sector", start)
-		}
-		if firstAudio {
-			slog.Info("CD first audio cached", "device", device, "read_duration", time.Since(opened), "total_duration", time.Since(started))
-			select {
-			case readyNotify <- struct{}{}:
-			default:
-			}
 		}
 	}
 }
@@ -520,6 +543,7 @@ func (r *cachedReader) Read(p []byte) (int, error) {
 		p = p[:min(len(p), int(44-r.offset))]
 	} else {
 		block := int((r.offset - 44) / (blockSectors * sectorBytes))
+		var end int64
 		for {
 			if err := r.ctx.Err(); err != nil {
 				return 0, err
@@ -528,7 +552,8 @@ func (r *cachedReader) Read(p []byte) (int, error) {
 				return 0, err
 			}
 			s.mu.Lock()
-			ready, err, changed := t.ready[block], s.err, s.changed
+			end = 44 + int64((block*blockSectors+t.filled[block])*sectorBytes)
+			ready, err, changed := r.offset < end, s.err, s.changed
 			if err == nil {
 				err = s.readErr
 			}
@@ -550,7 +575,6 @@ func (r *cachedReader) Read(p []byte) (int, error) {
 			case <-changed:
 			}
 		}
-		end := min(size, 44+int64((block+1)*blockSectors*sectorBytes))
 		p = p[:min(len(p), int(end-r.offset))]
 	}
 	n, err := t.file.ReadAt(p, r.offset)

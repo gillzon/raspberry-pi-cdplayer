@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http/httptest"
 	"sync/atomic"
@@ -16,6 +17,143 @@ import (
 type recoveryReader struct {
 	read  func(int, int) ([]byte, error)
 	close func()
+}
+
+func TestRecoveryPreservesShortReadsAndResumesAtMissingSector(t *testing.T) {
+	for _, withError := range []bool{false, true} {
+		t.Run(fmt.Sprintf("data_with_error=%v", withError), func(t *testing.T) {
+			reopening, resume := make(chan struct{}), make(chan struct{})
+			calls := make(chan readCall, 4)
+			c := &Cache{Root: t.TempDir(), BaseURL: "http://localhost"}
+			c.Open = func(context.Context, string, []Layout) (Reader, error) {
+				return recoveryReader{read: func(start, count int) ([]byte, error) {
+					if start == 0 {
+						data, _ := pcmBlock(0, 3)
+						if withError {
+							return data, io.ErrUnexpectedEOF
+						}
+						return data, nil
+					}
+					if start != 3 || count != 12 {
+						t.Errorf("short read was repeated: %d %d", start, count)
+					}
+					return nil, io.ErrUnexpectedEOF
+				}}, nil
+			}
+			c.RecoveryOpen = func(ctx context.Context, _ string, _ []Layout) (Reader, error) {
+				close(reopening)
+				select {
+				case <-resume:
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				}
+				return recoveryReader{read: func(start, count int) ([]byte, error) {
+					calls <- readCall{start, count}
+					return pcmBlock(start, count)
+				}}, nil
+			}
+			if err := c.Observe("disc", "fake", []Layout{{1, 0, 17}}); err != nil {
+				t.Fatal(err)
+			}
+			defer c.Shutdown()
+			select {
+			case <-reopening:
+			case <-time.After(time.Second):
+				t.Fatal("no recovery")
+			}
+			url := c.TrackURL(1)
+			if got := c.Status(); got.CachedBytes != 3*sectorBytes || !got.Recovering || c.Ready() != nil {
+				t.Fatalf("valid sectors lost during recovery: %+v", got)
+			}
+			r := &cachedReader{ctx: context.Background(), session: c.session, track: c.session.tracks[0], offset: 44}
+			buffer := make([]byte, 15*sectorBytes)
+			n, err := r.Read(buffer)
+			if err != nil || n != 3*sectorBytes || !bytes.Equal(buffer[:n], bytes.Repeat([]byte{1}, n)) {
+				t.Fatalf("short cached read crossed into missing sectors: n=%d err=%v", n, err)
+			}
+			stream, done := httptest.NewRecorder(), make(chan struct{})
+			go func() { defer close(done); c.ServeHTTP(stream, httptest.NewRequest("GET", url, nil)) }()
+			select {
+			case <-done:
+				t.Fatal("stream ended at recoverable gap")
+			case <-time.After(20 * time.Millisecond):
+			}
+			close(resume)
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Fatal("stream never recovered")
+			}
+			for _, want := range []readCall{{3, 12}, {15, 2}} {
+				select {
+				case got := <-calls:
+					if got != want {
+						t.Fatalf("recovery read %+v, want %+v", got, want)
+					}
+				case <-time.After(time.Second):
+					t.Fatal("missing recovery read")
+				}
+			}
+			want := wavHeader(17 * sectorBytes)
+			for _, part := range []readCall{{0, 3}, {3, 12}, {15, 2}} {
+				data, _ := pcmBlock(part.sector, part.count)
+				want = append(want, data...)
+			}
+			if stream.Code != 200 || !bytes.Equal(stream.Body.Bytes(), want) || c.TrackURL(1) != url || c.Status().CachedBytes != 17*sectorBytes {
+				t.Fatal("recovery lost or duplicated the good prefix")
+			}
+		})
+	}
+}
+
+func TestExhaustedRecoveryKeepsPartialBlockForManualRetry(t *testing.T) {
+	var opens atomic.Int32
+	c := &Cache{Root: t.TempDir(), BaseURL: "http://localhost"}
+	c.Open = func(context.Context, string, []Layout) (Reader, error) {
+		attempt := opens.Add(1)
+		return recoveryReader{read: func(start, count int) ([]byte, error) {
+			if start == 0 {
+				if attempt != 1 {
+					t.Error("manual retry reread already cached audio")
+				}
+				return pcmBlock(0, 3)
+			}
+			if attempt <= 3 {
+				return nil, io.ErrUnexpectedEOF
+			}
+			if start != 3 || count != 12 {
+				t.Errorf("wrong retry range %d %d", start, count)
+			}
+			return pcmBlock(start, count)
+		}}, nil
+	}
+	if err := c.Observe("disc", "fake", []Layout{{1, 0, 15}}); err != nil {
+		t.Fatal(err)
+	}
+	defer c.Shutdown()
+	status := waitCache(t, c, func(s Status) bool { return s.Error != "" })
+	if status.CachedBytes != 3*sectorBytes || c.Ready() != nil {
+		t.Fatalf("exhaustion hid good audio: %+v", status)
+	}
+	url := c.TrackURL(1)
+	request := httptest.NewRequest("GET", url, nil)
+	request.Header.Set("Range", fmt.Sprintf("bytes=44-%d", 44+3*sectorBytes-1))
+	response := httptest.NewRecorder()
+	c.ServeHTTP(response, request)
+	if response.Code != 206 || !bytes.Equal(response.Body.Bytes(), bytes.Repeat([]byte{1}, 3*sectorBytes)) {
+		t.Fatal("exhaustion discarded cached prefix")
+	}
+	r := &cachedReader{ctx: context.Background(), session: c.session, track: c.session.tracks[0], offset: 44 + 3*sectorBytes}
+	if _, err := r.Read(make([]byte, 4)); err == nil {
+		t.Fatal("gap was replaced with silence")
+	}
+	if !c.Retry() {
+		t.Fatal("manual retry failed")
+	}
+	waitCache(t, c, func(s Status) bool { return s.CachedBytes == s.TotalBytes })
+	if c.TrackURL(1) != url || opens.Load() != 4 {
+		t.Fatal("manual retry rebuilt cache")
+	}
 }
 
 func (r recoveryReader) Read(start, count int) ([]byte, error) { return r.read(start, count) }
