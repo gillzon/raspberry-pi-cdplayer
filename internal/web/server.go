@@ -46,6 +46,7 @@ type State struct {
 	AudioCacheEnabled bool                  `json:"audio_cache_enabled"`
 	CDReadSpeed       int                   `json:"cd_read_speed"`
 	CDStartupSpeed    int                   `json:"cd_startup_speed"`
+	ScreenActivity    time.Time             `json:"screen_activity"`
 	ScreenAsleep      bool                  `json:"screen_asleep"`
 	DisplayVersion    string                `json:"display_version"`
 	Radio             *radio.Station        `json:"radio,omitempty"`

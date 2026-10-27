@@ -613,6 +613,10 @@ GPIO buttons. Do not guess GPIO pins from the screen size alone.
 
 ### Automatic screen sleep and manual sleep
 
+The display dims after **two minutes without interaction**, including during playback.
+Touching the screen or using the player controls restores full brightness. Dimming
+uses a dark overlay because the kernel backlight driver only supports on/off.
+
 The LCD backlight automatically turns off after **three minutes without playback**,
 including when paused, stopped, or waiting for music after startup. CD, USB,
 radio, and Spotify playback keep it awake. Automatic sleep preserves the selected

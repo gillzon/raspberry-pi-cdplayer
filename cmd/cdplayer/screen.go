@@ -11,12 +11,14 @@ const screenIdleTimeout = 3 * time.Minute
 // Only automatic sleep wakes on observed playback. Explicit sleep keeps its
 // existing stop/idle behavior, even if the last MPD status is still playing.
 type screenState struct {
+	activity  time.Time
 	asleep    bool
 	automatic bool
 	idleSince time.Time
 }
 
 func (s *screenState) setAsleep(asleep bool, now time.Time) {
+	s.activity = now
 	s.asleep = asleep
 	s.automatic = false
 	s.idleSince = now
