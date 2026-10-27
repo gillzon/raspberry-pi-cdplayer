@@ -307,6 +307,7 @@ func main() {
 		state.AudioCacheEnabled = audioCache != nil
 		state.CDReadSpeed, state.CDStartupSpeed = *cdSpeed, *cdStartupSpeed
 		state.ScreenAsleep = screen.asleep
+		state.ScreenActivity = screen.activity
 		if controller.Source() == "radio" {
 			station := selectedStation
 			state.Radio = &station
@@ -344,6 +345,7 @@ func main() {
 		return backend.StartURLs([]string{station.URL}, 0)
 	}
 	handleControl := func(request controlRequest) error {
+		screen.activity = time.Now()
 		switch request.command.Action {
 		case "screen-sleep", "screen-wake", "screen-toggle":
 			if err := request.ctx.Err(); err != nil {
