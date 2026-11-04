@@ -39,6 +39,14 @@ func TestStreamingScanPublishesFinalProgress(t *testing.T) {
 	if err != nil || result.Total != 2 || result.Status.Percent != 100 {
 		t.Fatalf("search: %+v %v", result, err)
 	}
+	albums, err := l.Browse(ctx, "", 0, "albums", "")
+	if err != nil || albums.Total != 1 || len(albums.Collections) != 1 || albums.Collections[0].Count != 2 {
+		t.Fatalf("albums: %+v %v", albums, err)
+	}
+	songs, err := l.Browse(ctx, "", 0, "album", albums.Collections[0].ID)
+	if err != nil || songs.Total != 2 || len(songs.Tracks) != 2 || songs.Tracks[0].Path != "" {
+		t.Fatalf("album songs: %+v %v", songs, err)
+	}
 	canceled, stop := context.WithCancel(ctx)
 	stop()
 	if err := l.runScan(canceled); err == nil {

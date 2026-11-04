@@ -90,6 +90,38 @@ class LibraryTests(unittest.TestCase):
         updated = self.db.execute('SELECT * FROM tracks WHERE path = ?', ('album/one.mp3',)).fetchone()
         self.assertEqual(self.command('art', updated['cover']), PNG)
 
+    def test_collection_browsing_keeps_same_named_albums_separate_and_orders_tracks(self):
+        self.song('first/two.mp3', title='Second', track=2)
+        self.song('first/one.mp3', title='First', track=1, art=PNG)
+        self.song('second/one.mp3', artist='Other', album='Debut')
+        index.scan(self.db, self.root)
+        albums = json.loads(self.command('browse', '', '0', 'albums', ''))
+        self.assertEqual(albums['total'], 2)
+        first = next(a for a in albums['collections'] if a['artist'] == 'Björk')
+        self.assertEqual(first['count'], 2)
+        self.assertTrue(first['cover_url'])
+        songs = json.loads(self.command('browse', '', '0', 'album', first['id']))
+        self.assertEqual([t['title'] for t in songs['tracks']], ['First', 'Second'])
+        self.assertTrue(all('path' not in t for t in songs['tracks']))
+        matched = json.loads(self.command('browse', 'BJORK', '0', 'albums', ''))
+        self.assertEqual(matched['total'], 1)
+        self.assertEqual(json.loads(self.command('browse', "' OR 1=1 --", '0', 'albums', ''))['total'], 0)
+        artists = json.loads(self.command('browse', '', '0', 'artists', ''))
+        self.assertEqual(artists['total'], 2)
+        artist = next(a for a in artists['collections'] if a['title'] == 'Björk')
+        songs = json.loads(self.command('browse', '', '0', 'artist', artist['id']))
+        self.assertEqual(songs['total'], 2)
+
+    def test_collections_are_paged_across_the_entire_library(self):
+        for number in range(25):
+            self.song(f'album-{number:02}/song.mp3', album=f'Album {number:02}', artist=f'Artist {number:02}')
+        index.scan(self.db, self.root)
+        for view in ('albums', 'artists'):
+            pages = [json.loads(self.command('browse', '', str(offset), view, '')) for offset in (0, 20)]
+            self.assertEqual([len(p['collections']) for p in pages], [20, 5])
+            self.assertTrue(all(p['total'] == 25 for p in pages))
+            self.assertEqual(len({c['id'] for p in pages for c in p['collections']}), 25)
+
     def test_prune_unplug_rollback_and_skip_symlinks(self):
         song = self.song('one.mp3')
         (self.root / 'linked.mp3').symlink_to(song)

@@ -73,7 +73,9 @@ test('USB status opens the library, follows the current song, and blocks unavail
  const update=(id,playback='play',source='usb',blocked=false)=>context.usbBrowserUpdate({source,usb:{id},mpd:{state:playback},usb_mix:true},blocked);
  update('one');await tick();
  assert.equal(get('musicBrowser').hidden,false);
- assert.equal(requests.length,1);
+ assert.equal(requests.length,2);
+ assert.equal(get('libraryHome').hidden,false);
+ get('viewSongs').onclick();await tick();
  const [first,second]=get('musicResults').children;
  assert.equal(first.attributes['aria-current'],'true');
  assert.equal(first.attributes['aria-label'],'Pause First by Artist · Album');
@@ -92,7 +94,8 @@ test('USB status opens the library, follows the current song, and blocks unavail
  assert.equal(second.attributes['aria-current'],'false');
  assert.equal(first.disabled,false);
  assert.equal(get('mixAll').attributes['aria-pressed'],'false');
- update('two');await tick();assert.equal(requests.length,2);
+ update('two');await tick();assert.equal(requests.length,4);
+ assert.equal(get('songList').hidden,false,'Source changes preserve the open library view');
 });
 
 test('USB now-playing and next use MPD even with no CD inserted',async()=>{
@@ -121,4 +124,31 @@ test('USB now-playing and next use MPD even with no CD inserted',async()=>{
  assert.equal(get('usbToggle').attributes['aria-label'],'Pause');
  state.mpd.state='pause';await vm.runInContext('refresh()',context);
  assert.equal(get('usbToggle').attributes['aria-label'],'Play');
+});
+
+test('home cards browse complete collections, play the first track, and restore navigation',async()=>{
+ const elements=new Map();const get=id=>{if(!elements.has(id))elements.set(id,element());return elements.get(id)};
+ get('musicBrowser').hidden=true;
+ const calls=[],plays=[];
+ const album={id:'album-first',title:'Same title',artist:'Artist',count:25,cover_url:''};
+ const tracks=Array.from({length:20},(_,i)=>({id:'song-'+i,title:'Song '+i,artist:'Artist',album:'Same title',duration:60}));
+ const context=vm.createContext({document:{getElementById:get,createElement:element},duration:()=> '1:00',control:(...args)=>plays.push(args),
+  fetch:async url=>{calls.push(url);return {ok:true,json:async()=>url.includes('view=album&')?{tracks,total:25,status:{count:50}}:{collections:[album],total:1,status:{count:50}}}},
+  AbortController,AbortSignal,setTimeout:()=>1,clearTimeout(){},encodeURIComponent});
+ vm.runInContext(fs.readFileSync(__dirname+'/library.js','utf8'),context);
+ context.usbBrowserUpdate({source:'usb',usb:{id:'song-5',album:'Same title',artist:'Artist'},mpd:{state:'play'},usb_queue_length:25});await tick();
+ assert.equal(get('quickPicks').children.length,1);
+ assert.equal(get('homeArtists').children.length,1);
+ get('quickPicks').children[0].onclick();await tick();
+ assert.match(calls.at(-1),/view=album&id=album-first$/);
+ assert.equal(get('libraryHome').hidden,true);
+ assert.equal(get('collectionTitle').textContent,'Same title');
+ get('playCollection').onclick();assert.deepEqual(plays.pop(),['usb-play',undefined,undefined,'song-0']);
+ get('musicNext').onclick();await tick();
+ assert.match(calls.at(-1),/offset=20&view=album/);
+ get('browseBack').onclick();await tick();
+ assert.equal(get('libraryHome').hidden,false);
+ get('openPlayingAlbum').onclick();await tick();
+ assert.match(calls.at(-1),/view=album&id=song-5$/);
+ get('playCollection').onclick();assert.deepEqual(plays.pop(),['usb-play',undefined,undefined,'song-0'],'View album from the current song still plays from the start');
 });

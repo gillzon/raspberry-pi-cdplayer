@@ -46,9 +46,18 @@ type Status struct {
 }
 
 type Results struct {
-	Tracks []Track `json:"tracks"`
-	Total  int     `json:"total"`
-	Status Status  `json:"status"`
+	Tracks      []Track      `json:"tracks"`
+	Collections []Collection `json:"collections,omitempty"`
+	Total       int          `json:"total"`
+	Status      Status       `json:"status"`
+}
+
+type Collection struct {
+	ID       string `json:"id"`
+	Title    string `json:"title"`
+	Artist   string `json:"artist"`
+	CoverURL string `json:"cover_url"`
+	Count    int    `json:"count"`
 }
 
 type Library struct {
@@ -192,6 +201,18 @@ func (l *Library) Run(ctx context.Context) {
 }
 func (l *Library) Search(ctx context.Context, query string, offset int) (Results, error) {
 	data, err := l.run(ctx, "search", query, fmt.Sprint(offset))
+	var result Results
+	if err == nil {
+		err = json.Unmarshal(data, &result)
+	}
+	result.Status = l.Snapshot()
+	return result, err
+}
+func (l *Library) Browse(ctx context.Context, query string, offset int, view, selected string) (Results, error) {
+	if view == "" || view == "songs" {
+		return l.Search(ctx, query, offset)
+	}
+	data, err := l.run(ctx, "browse", query, fmt.Sprint(offset), view, selected)
 	var result Results
 	if err == nil {
 		err = json.Unmarshal(data, &result)

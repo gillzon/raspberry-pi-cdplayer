@@ -198,6 +198,44 @@ def public(row):
     return result
 
 
+def browse(db, query, offset, view, selected=''):
+    """Page collections in SQLite; never load a whole USB library into the UI."""
+    db.create_function('folder', 1, lambda path: str(Path(path).parent), deterministic=True)
+    db.create_function('normalized', 1, normalize, deterministic=True)
+    terms = normalize(query).split()[:20]
+    if view in ('albums', 'artists'):
+        group = 'folder(path), album' if view == 'albums' else 'artist'
+        # The representative is the first album track, matching playback order.
+        cte = ('WITH grouped AS (SELECT *, row_number() OVER (PARTITION BY ' + group +
+               ' ORDER BY track, title, id) AS rank, count(*) OVER (PARTITION BY ' + group +
+               ') AS song_count FROM tracks) ')
+        field = "album || ' ' || artist" if view == 'albums' else 'artist'
+        where = 'rank = 1' + ''.join(' AND instr(normalized(' + field + '), ?) > 0' for _ in terms)
+        total = db.execute(cte + 'SELECT count(*) FROM grouped WHERE ' + where, terms).fetchone()[0]
+        rows = db.execute(cte + 'SELECT * FROM grouped WHERE ' + where +
+                          ' ORDER BY artist COLLATE NOCASE, album COLLATE NOCASE, id LIMIT 20 OFFSET ?',
+                          [*terms, offset])
+        collections = [dict(id=r['id'], title=r['album'] if view == 'albums' else r['artist'],
+                            artist=r['artist'], count=r['song_count'],
+                            cover_url='/api/library/art/' + r['cover'] if r['cover'] else '') for r in rows]
+        return {'collections': collections, 'total': total}
+    if view not in ('album', 'artist'):
+        raise ValueError('Unknown library view')
+    row = db.execute('SELECT * FROM tracks WHERE id = ?', (selected,)).fetchone()
+    if row is None:
+        raise ValueError('Collection is no longer indexed; refresh the library')
+    where, params = ('album = ? AND folder(path) = ?', [row['album'], str(Path(row['path']).parent)]) if view == 'album' else ('artist = ?', [row['artist']])
+    where += ''.join(' AND instr(search, ?) > 0' for _ in terms)
+    params += terms
+    total = db.execute('SELECT count(*) FROM tracks WHERE ' + where, params).fetchone()[0]
+    rows = db.execute('SELECT * FROM tracks WHERE ' + where +
+                      ' ORDER BY album COLLATE NOCASE, track, title, id LIMIT 20 OFFSET ?', [*params, offset])
+    tracks = [public(r) for r in rows]
+    for track in tracks:
+        track.pop('path')
+    return {'tracks': tracks, 'total': total}
+
+
 def main():
     command, database, root, *args = sys.argv[1:]
     db = connect(database)
@@ -218,6 +256,8 @@ def main():
         result = {'tracks': [public(r) for r in rows], 'total': total}
         for track in result['tracks']:
             track.pop('path')
+    elif command == 'browse':
+        result = browse(db, args[0], int(args[1]), args[2], args[3])
     elif command == 'mix':
         result = [public(row) for row in db.execute('SELECT * FROM tracks ORDER BY RANDOM()')]
     elif command == 'get':

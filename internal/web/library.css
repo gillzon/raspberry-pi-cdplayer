@@ -1,0 +1,207 @@
+/* Shared USB browser components. The full app shell is enabled for USB playback. */
+* { box-sizing: border-box; }
+button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid #1ed760; outline-offset: 3px; }
+.usb-only, .transport-icon { display: none; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+#usbTopbar { display: none; }
+body:has(#musicBrowser:not([hidden])) #usbTopbar { display: flex; }
+#usbTopbar { align-items: center; gap: 8px; min-width: 0; }
+#usbHome { display: grid; place-items: center; width: 46px; height: 46px; padding: 12px; border: 0; border-radius: 50%; background: #202020; flex: 0 0 auto; }
+#usbHome svg { width: 22px; fill: #fff; }
+.global-search { display: flex; align-items: center; gap: 12px; background: #202020; border-radius: 30px; padding: 0 15px; height: 46px; min-width: 0; flex: 1; }
+.global-search svg { width: 23px; height: 23px; fill: none; stroke: #b3b3b3; stroke-width: 1.8; flex-shrink: 0; }
+#musicSearch { font: inherit; color: #fff; background: transparent; border: 0; width: 100%; min-width: 0; padding: 12px 0; }
+#musicSearch:focus { outline: none; }
+.global-search:focus-within { outline: 2px solid #fff; }
+.browse-toolbar, .browse-filters, .shelf-heading, .sidebar-heading, .sidebar-caption { display: flex; align-items: center; gap: 8px; }
+.browse-toolbar, .shelf-heading, .sidebar-heading, .sidebar-caption { justify-content: space-between; }
+.browse-filters button { border: 0; background: #2b2b2b; border-radius: 22px; padding: 8px 13px; font-size: 13px; white-space: nowrap; }
+.browse-filters [aria-pressed=true] { background: #fff !important; color: #111; }
+.library-actions { align-items: center; margin: 20px 0; }
+#mixAll, #playCollection { background: #1ed760; color: #06190b; border: 0; border-radius: 24px; font-weight: 700; }
+#mixAll:hover, #playCollection:hover { background: #3be477; }
+#mixAll[aria-pressed=true] { outline: 2px solid #1ed760; outline-offset: 3px; }
+#refreshLibrary, #browseBack { font-size: 12px; background: transparent; border: 1px solid #555; border-radius: 22px; }
+.quick-picks { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 10px; margin: 8px 0 36px; }
+.quick-pick, .sidebar-item, .music-card { text-align: left; border: 0; min-width: 0; font-size: 14px; }
+.quick-pick { display: flex; align-items: center; gap: 12px; padding: 0; border-radius: 4px; background: #ffffff16; overflow: hidden; }
+.quick-pick:hover { background: #ffffff26; }
+.quick-pick .card-art { width: 64px; height: 64px; flex: 0 0 64px; border-radius: 0; }
+.quick-pick .card-title { font-size: 13px; white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.quick-pick .card-copy { padding-right: 8px; }
+.quick-pick .card-subtitle { display: none; }
+.card-art { display: grid; place-items: center; width: 100%; aspect-ratio: 1; overflow: hidden; border-radius: 6px; background: linear-gradient(135deg,#304741,#18212d); color: #98b4a7; font-size: 36px; flex-shrink: 0; }
+.card-art img, .song-art img, .dock-art img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.card-copy { display: block; min-width: 0; }
+.card-title { display: block; font-weight: 600; color: #f5f5f5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card-subtitle { display: block; color: #aaa; font-weight: 400; font-size: 12px; margin-top: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.shelf-heading { margin: 30px 0 14px; }
+.shelf-heading h2 { font-size: 23px; letter-spacing: -.7px; margin: 0; }
+.shelf-heading button, .sidebar-caption button { padding: 4px 0; background: transparent; border: 0; font-size: 12px; color: #b3b3b3; white-space: nowrap; }
+.shelf-heading button:hover, .sidebar-caption button:hover { text-decoration: underline; color: #fff; background: transparent; }
+.card-shelf { display: grid; grid-auto-flow: column; grid-auto-columns: clamp(130px,18%,190px); gap: 8px; overflow-x: auto; padding-bottom: 12px; scrollbar-width: thin; }
+.music-card { padding: 8px; border-radius: 7px; background: transparent; }
+.music-card:hover { background: #ffffff0c; }
+.music-card .card-art { margin-bottom: 14px; box-shadow: 0 6px 18px #0004; }
+.artist-card .card-art { border-radius: 50%; }
+.collection-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(145px,1fr)); gap: 12px; }
+#collectionHeader { display: flex; align-items: end; gap: 24px; margin: 28px 0; }
+#collectionCover { flex: 0 0 160px; }
+#collectionKind { font-size: 11px; letter-spacing: .08em; color: #bbb; }
+#collectionTitle { font-size: clamp(28px,3.5vw,56px); letter-spacing: -1.5px; line-height: 1.1; margin: 10px 0; overflow-wrap: anywhere; }
+#collectionSubtitle { color: #aaa; font-size: 13px; }
+#playCollection { font-size: 13px; padding: 12px 20px; }
+#songsHeading { font-size: 25px; letter-spacing: -.6px; }
+.song-columns, .song-row { display: grid; grid-template-columns: 24px minmax(0,1.6fr) minmax(0,1fr) 48px; gap: 16px; align-items: center; }
+.song-columns { padding: 14px 12px; border-bottom: 1px solid #ffffff20; color: #aaa; font-size: 12px; }
+.song-columns span:last-child { text-align: right; }
+#musicResults .song-row { width: 100%; padding: 10px 12px; margin: 2px 0; text-align: left; border: 0; border-radius: 5px; background: transparent; font-size: 14px; font-weight: 400; }
+#musicResults .song-row:hover { background: #ffffff12; }
+#musicResults .song-row[aria-current=true] { background: #1ed76012; }
+.song-row[aria-current=true] .song-title, .song-row[aria-current=true] .song-number { color: #1ed760; }
+.song-number { color: #a7a7a7; text-align: center; font-size: 12px; }
+.song-main { display: flex; gap: 12px; align-items: center; min-width: 0; }
+.song-art { display: grid; place-items: center; flex: 0 0 42px; width: 42px; height: 42px; overflow: hidden; border-radius: 4px; background: #303737; color: #b0b9b4; font-size: 23px; }
+.song-copy { min-width: 0; }
+.song-title, .song-artist, .song-album { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.song-title { color: #f5f5f5; font-weight: 600; }
+.song-artist { color: #aaa; margin-top: 4px; font-size: 12px; }
+.song-album, .song-duration { color: #aaa; font-size: 12px; }
+.song-duration { text-align: right; font-variant-numeric: tabular-nums; }
+#libraryEmpty { text-align: center; padding: 32px 16px; color: #b3b3b3; }
+#libraryStatus { font-size: 11px; line-height: 1.6; color: #999; margin: 24px 0 0; }
+#libraryPagination { justify-content: space-between; align-items: center; margin-top: 24px; }
+#libraryPagination button { font-size: 12px; padding: 9px 12px; }
+#musicPage { font-size: 12px; color: #aaa; }
+
+/* Desktop shell: library, browsing, now playing, and a single persistent dock. */
+body[data-source=usb] { background: #000; color: #f5f5f5; max-width: none; margin: 0; padding: 0 8px 94px; font: 14px system-ui,sans-serif; height: 100dvh; overflow: hidden; }
+body[data-source=usb] .usb-only { display: block; }
+body[data-source=usb] #appHeader { height: 64px; display: grid; grid-template-columns: 260px minmax(0,1fr) 300px; align-items: center; gap: 16px; padding: 0 8px; }
+body[data-source=usb] #appHeader h1 { margin: 0; font-size: 19px; letter-spacing: -.7px; padding-left: 10px; }
+body[data-source=usb] #usbTopbar { display: flex; width: min(100%,540px); justify-self: center; }
+body[data-source=usb] .tabs { margin: 0; justify-content: end; gap: 6px; }
+body[data-source=usb] .tabs button { border: 0; background: #1b1b1b; border-radius: 20px; padding: 10px 12px; font-size: 12px; }
+body[data-source=usb] .tabs [aria-selected=true] { background: #fff; color: #111; }
+#playerPanel[data-source=usb] { height: calc(100dvh - 158px); display: grid; grid-template-columns: 260px minmax(0,1fr) 300px; gap: 8px; }
+[data-source=usb] #librarySidebar, [data-source=usb] #librarySection, [data-source=usb] #cdAlbum { min-height: 0; min-width: 0; background: #121212; border: 0; border-radius: 8px; margin: 0; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #555 transparent; }
+[data-source=usb] #librarySidebar { grid-column: 1; grid-row: 1; padding: 20px 12px 12px; display: flex; flex-direction: column; }
+.sidebar-heading { padding: 0 8px 20px; }
+.sidebar-heading h2 { margin: 0; font-size: 15px; }
+.sidebar-heading>span { color: #aaa; font-size: 20px; }
+.sidebar-caption { padding: 20px 8px 12px; color: #999; font-size: 11px; }
+#sidebarItems { flex: 1; }
+.sidebar-item { display: flex; width: 100%; gap: 12px; align-items: center; padding: 8px; background: transparent; border-radius: 5px; }
+.sidebar-item:hover { background: #ffffff0d; }
+.sidebar-item .card-art { width: 46px; height: 46px; font-size: 22px; }
+.sidebar-item .card-title { font-size: 13px; font-weight: 500; }
+.sidebar-item .card-subtitle { font-size: 11px; margin-top: 4px; }
+.sidebar-footer { padding: 16px 8px 2px; margin-top: 20px; border-top: 1px solid #ffffff12; display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+.device-badge { font-size: 11px; color: #1ed760; }
+.sidebar-footer button { padding: 6px 10px; border: 1px solid #444; border-radius: 18px; font-size: 11px; background: transparent; }
+[data-source=usb] #librarySection { grid-column: 2; grid-row: 1; background: linear-gradient(#242424 0,#161616 260px,#121212 420px); padding: 24px 28px 36px; }
+[data-source=usb] #pickSong, [data-source=usb] #radioSection, [data-source=usb] #playerDetails, [data-source=usb] #source, [data-source=usb] #switchCD { display: none; }
+[data-source=usb] .source-bar { position: fixed; z-index: 12; bottom: 34px; right: 24px; width: 220px; font-size: 10px; text-align: right; color: #999; }
+[data-source=usb] #libraryStatus { margin-top: 32px; }
+[data-source=usb] .library-actions { margin: 16px 0; }
+[data-source=usb] #mixAll { font-size: 12px; padding: 9px 15px; }
+[data-source=usb] #refreshLibrary { padding: 8px 12px; font-size: 11px; }
+[data-source=usb] #cdAlbum { grid-column: 3; grid-row: 1; display: block; padding: 18px 16px; }
+.now-panel-heading { font-size: 13px; font-weight: 650; margin: 2px 0 22px; }
+.now-panel-heading span { float: right; color: #aaa; }
+[data-source=usb] .cover { width: 100%; height: auto; aspect-ratio: 1; background: linear-gradient(140deg,#345548,#19261f); border-radius: 7px; margin-bottom: 22px; }
+[data-source=usb] .cover img { object-fit: cover; }
+[data-source=usb] #playingTitle { font-size: 25px; letter-spacing: -.8px; line-height: 1.15; overflow-wrap: anywhere; }
+[data-source=usb] #albumTitle { display: none; }
+[data-source=usb] #albumArtist { font-size: 14px; color: #b3b3b3; }
+[data-source=usb] #metadataStatus { color: #1ed760; font-size: 11px; }
+.now-album-card { background: #202020; padding: 18px; margin-top: 28px; border-radius: 7px; }
+.now-album-card>.muted { font-size: 10px; letter-spacing: .05em; color: #aaa; }
+.now-album-card h3 { font-size: 16px; margin: 16px 0 8px; }
+.now-album-card p { color: #aaa; font-size: 12px; line-height: 1.6; }
+.now-album-card button { border-radius: 22px; border: 1px solid #777; background: transparent; font-size: 12px; padding: 8px 14px; margin-top: 10px; }
+[data-source=usb] #transport { position: fixed; z-index: 10; bottom: 0; left: 0; right: 0; margin: 0; padding: 12px 20px; min-height: 90px; border: 0; border-radius: 0; background: #000; display: grid; grid-template-columns: minmax(0,1fr) minmax(260px,1.4fr) minmax(0,1fr); gap: 6px 28px; align-items: center; }
+[data-source=usb] .transport-info { grid-column: 1; grid-row: 1 / span 2; min-width: 0; display: flex; align-items: center; gap: 12px; }
+.dock-copy { min-width: 0; }
+.dock-art { width: 56px; height: 56px; display: grid; place-items: center; overflow: hidden; border-radius: 4px; background: #222; color: #aaa; font-size: 24px; }
+#dockTitle { font-size: 13px; font-weight: 550; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#dockArtist { font-size: 11px; color: #aaa; margin-top: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+[data-source=usb] #now, [data-source=usb] #disc { display: none; }
+[data-source=usb] .transport-progress { grid-column: 2; grid-row: 2; display: flex; align-items: center; gap: 12px; }
+[data-source=usb] #progress { height: 4px; display: block; accent-color: #fff; }
+[data-source=usb] #time { margin: 0; text-align: center; font-size: 10px; color: #aaa; font-variant-numeric: tabular-nums; white-space: nowrap; }
+[data-source=usb] .transport-controls { grid-column: 2; grid-row: 1; justify-content: center; align-items: center; flex-wrap: nowrap; gap: 16px; }
+[data-source=usb] .transport-controls [data-action=play], [data-source=usb] .transport-controls [data-action=pause], [data-source=usb] .transport-controls [data-action=eject], [data-source=usb] .transport-label { display: none; }
+[data-source=usb] .transport-icon { display: inline; }
+[data-source=usb] .transport-controls button { border: 0; background: transparent; padding: 6px; color: #bbb; font-size: 16px; }
+[data-source=usb] .transport-controls [data-action=stop] { order: 4; font-size: 10px; }
+[data-source=usb] #usbToggle { width: 34px; height: 34px; padding: 0; border-radius: 50%; background: #fff; color: #111; font-size: 16px; }
+[data-source=usb] #usbToggle:hover { transform: scale(1.06); }
+[data-source=usb] #selection:empty, [data-source=usb] #error:empty, [data-source=usb] #commandError:empty { display: none; }
+[data-source=usb] #transport>p { grid-column: 1/-1; font-size: 12px; margin: 0; max-height: 54px; overflow: auto; background: #000; }
+body[data-source=usb] #systemPanel, body[data-source=usb] #settingsPanel { overflow: auto; height: calc(100dvh - 80px); max-width: 960px; width: 100%; margin: auto; }
+@media(min-width:1900px) {
+ body[data-source=usb] #appHeader, #playerPanel[data-source=usb] { grid-template-columns: 340px minmax(0,1fr) 340px; }
+ .card-shelf { grid-auto-columns: minmax(160px,1fr); }
+}
+@media(max-width:1200px) {
+ body[data-source=usb] #appHeader, #playerPanel[data-source=usb] { grid-template-columns: 210px minmax(0,1fr) 240px; }
+ body[data-source=usb] #appHeader { grid-template-columns: 150px minmax(0,1fr) 260px; }
+ [data-source=usb] #librarySection { padding: 20px 18px; }
+ .quick-picks { grid-template-columns: repeat(2,minmax(0,1fr)); }
+ [data-source=usb] #cdAlbum { padding: 16px 12px; }
+ .sidebar-item .card-art { width: 38px; height: 38px; }
+ .browse-filters button { padding: 8px 10px; font-size: 12px; }
+}
+@media(max-width:1000px) {
+ #playerPanel[data-source=usb] { grid-template-columns: 210px minmax(0,1fr); }
+ [data-source=usb] #cdAlbum { display: none; }
+ [data-source=usb] .source-bar { display: none; }
+ [data-source=usb] #transport { grid-template-columns: minmax(0,1fr) minmax(260px,1.4fr); }
+ .song-columns, .song-row { grid-template-columns: 20px minmax(0,1fr) 40px; gap: 10px; }
+ .song-album, .song-columns span:nth-child(3) { display: none; }
+}
+@media(max-width:700px) {
+ body[data-source=usb] { padding: 0 6px 104px; }
+ body[data-source=usb] #appHeader { height: 112px; grid-template-columns: 1fr auto; gap: 8px; padding: 10px 6px; }
+ body[data-source=usb] #appHeader h1 { font-size: 16px; padding: 0; }
+ body[data-source=usb] #usbTopbar { grid-column: 1/-1; grid-row: 2; width: 100%; }
+ body[data-source=usb] .tabs { grid-column: 2; grid-row: 1; }
+ body[data-source=usb] .tabs button { font-size: 10px; padding: 7px 9px; }
+ #usbHome, .global-search { height: 40px; }
+ #usbHome { width: 40px; padding: 10px; }
+ #musicSearch { font-size: 13px; }
+ #playerPanel[data-source=usb] { height: calc(100dvh - 216px); display: block; }
+ [data-source=usb] #librarySidebar { display: none; }
+ [data-source=usb] #librarySection { height: 100%; padding: 18px 14px 28px; }
+ .quick-picks { gap: 8px; margin-bottom: 28px; }
+ .quick-pick { gap: 8px; }
+ .quick-pick .card-art { width: 48px; height: 48px; flex-basis: 48px; }
+ .quick-pick .card-title { font-size: 11px; }
+ .shelf-heading h2 { font-size: 20px; }
+ .shelf-heading button { font-size: 11px; }
+ .card-shelf { grid-auto-columns: 140px; }
+ .collection-grid { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 6px; }
+ #collectionHeader { gap: 14px; align-items: center; }
+ #collectionCover { flex-basis: 90px; }
+ #collectionTitle { font-size: 28px; }
+ #collectionSubtitle { font-size: 11px; }
+ [data-source=usb] #transport { grid-template-columns: minmax(0,1fr) auto; min-height: 100px; gap: 9px; padding: 12px 14px calc(10px + env(safe-area-inset-bottom)); }
+ [data-source=usb] .transport-info { grid-column: 1; grid-row: 1; gap: 9px; }
+ .dock-art { width: 42px; height: 42px; }
+ #dockTitle { font-size: 12px; }
+ #dockArtist { font-size: 10px; }
+ [data-source=usb] .transport-controls { grid-column: 2; gap: 7px; }
+ [data-source=usb] .transport-controls button { padding: 4px; font-size: 13px; }
+ [data-source=usb] .transport-controls [data-action=stop] { display: none; }
+ [data-source=usb] .transport-progress { grid-column: 1/-1; grid-row: 2; }
+ body[data-source=usb] #systemPanel, body[data-source=usb] #settingsPanel { height: calc(100dvh - 124px); }
+}
+@media(prefers-reduced-motion:reduce) { button { transform: none !important; } }
+
+#usbSources { position: relative; flex-shrink: 0; font-size: 12px; }
+#usbSources summary { cursor: pointer; list-style: none; padding: 12px 10px; color: #ccc; }
+#usbSources summary:focus-visible { outline: 2px solid #1ed760; border-radius: 5px; }
+#usbSources>div { position: absolute; z-index: 30; right: 0; top: 42px; width: 160px; padding: 6px; background: #282828; border-radius: 6px; box-shadow: 0 8px 24px #0008; }
+#usbSources button { width: 100%; text-align: left; border: 0; background: transparent; padding: 12px; font-size: 12px; }
+#usbSources button:hover { background: #ffffff15; }
