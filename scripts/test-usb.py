@@ -39,6 +39,7 @@ with tempfile.TemporaryDirectory() as tmp:
     queue = []
     state = {'state': 'stop'}
     commands = []
+    playback_started = [time.monotonic()]
     def serve():
         conn, _ = listener.accept()
         with conn, conn.makefile('rwb', buffering=0) as stream:
@@ -53,6 +54,7 @@ with tempfile.TemporaryDirectory() as tmp:
                     queue.clear()
                     state.pop('song', None)
                 elif fields[0] == 'play':
+                    playback_started[0] = time.monotonic()
                     state['state'] = 'play'
                     if len(fields) > 1:
                         state['song'] = fields[1]
@@ -61,9 +63,10 @@ with tempfile.TemporaryDirectory() as tmp:
                 elif fields[0] == 'stop':
                     state['state'] = 'stop'
                 elif fields[0] in ('next', 'previous'):
+                    playback_started[0] = time.monotonic()
                     state['song'] = str(int(state.get('song', 0)) + (1 if fields[0]=='next' else -1))
                 if command == 'status':
-                    stream.write((''.join(k+': '+v+'\n' for k,v in state.items())+'duration: 1\nelapsed: 0.2\nOK\n').encode())
+                    stream.write((''.join(k+': '+v+'\n' for k,v in state.items())+f'duration: 1\nelapsed: {time.monotonic()-playback_started[0]:.3f}\nOK\n').encode())
                 else:
                     stream.write(b'OK\n')
     threading.Thread(target=serve, daemon=True).start()
@@ -138,6 +141,33 @@ with tempfile.TemporaryDirectory() as tmp:
         assert status['source']=='usb' and status['usb_mix']
         assert len(queue)==45 and len(set(queue))==45, 'Mix all omitted or duplicated songs'
         assert status['usb']['id']+'.mp3' in queue[0]
+        def playlist_change(**change):
+            req = urllib.request.Request(base+'/api/playlists', data=json.dumps(change).encode(), headers={'Content-Type':'application/json'})
+            return json.load(urllib.request.urlopen(req, timeout=5))
+        playlist = playlist_change(action='create', name='Integration playlist')
+        for track in [result['tracks'][1], result['tracks'][0]]:
+            playlist_change(action='add', id=playlist['id'], song_id=track['id'])
+        page = get('/api/library?view=playlist&id='+playlist['id'])
+        assert [t['id'] for t in page['tracks']] == [result['tracks'][1]['id'], result['tracks'][0]['id']]
+        control('usb-playlist', playlist_id=playlist['id'])
+        status = get('/api/status')
+        assert status['usb_playlist'] == playlist['id'] and len(queue) == 2
+        assert status['usb']['id'] == result['tracks'][1]['id']
+        for _ in range(50):
+            played = get('/api/library?view=most-played')['tracks'] or []
+            if any(t['id'] == status['usb']['id'] and t['play_count'] >= 1 for t in played):
+                break
+            time.sleep(.1)
+        else:
+            raise AssertionError('USB listening was not counted without a browser')
+        control('next')
+        time.sleep(1.1)
+        assert get('/api/status')['usb']['id'] == result['tracks'][0]['id']
+        playlist_change(action='rename', id=playlist['id'], name='Saved playlist')
+        assert get('/api/library?view=playlists')['collections'][0]['title'] == 'Saved playlist'
+        playlist_change(action='remove', id=playlist['id'], song_id=result['tracks'][1]['id'])
+        assert get('/api/library?view=playlist&id='+playlist['id'])['total'] == 1
+        print('PASS: saved playlist creation, order, playback, next, rename, removal, and server-side play counting')
         print('PASS: Mix all across 45 songs, 20/20/5 pagination, real MP3 index/search/duration, selected album song, HTTP range streaming, pause/previous/next/stop, removal, and manual CD return')
     finally:
         app.terminate()

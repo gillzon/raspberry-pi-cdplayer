@@ -122,6 +122,52 @@ class LibraryTests(unittest.TestCase):
             self.assertTrue(all(p['total'] == 25 for p in pages))
             self.assertEqual(len({c['id'] for p in pages for c in p['collections']}), 25)
 
+    def test_playlists_persist_order_deduplicate_and_survive_missing_tracks(self):
+        self.song('one.mp3', title='One')
+        self.song('two.mp3', title='Two')
+        index.scan(self.db, self.root)
+        tracks = json.loads(self.command('search', '', '0'))['tracks']
+        change = lambda **values: json.loads(self.command('playlist-change', json.dumps(values)))
+        playlist = change(action='create', name=' My favorites ')
+        self.assertEqual(playlist['title'], 'My favorites')
+        for song in [tracks[1], tracks[0], tracks[1]]:
+            change(action='add', id=playlist['id'], song_id=song['id'])
+        queue = json.loads(self.command('playlist-queue', playlist['id']))
+        self.assertEqual([s['id'] for s in queue], [tracks[1]['id'], tracks[0]['id']])
+        page = json.loads(self.command('browse', '', '0', 'playlist', playlist['id']))
+        self.assertEqual(page['total'], 2)
+        self.assertTrue(all('path' not in s for s in page['tracks']))
+        change(action='rename', id=playlist['id'], name='Road trip')
+        self.assertEqual(json.loads(self.command('browse', 'road', '0', 'playlists', ''))['collections'][0]['title'], 'Road trip')
+        # A rescan can remove indexed tracks without deleting user-curated data.
+        (self.root / 'two.mp3').unlink()
+        index.scan(self.db, self.root)
+        self.assertEqual(json.loads(self.command('browse', '', '0', 'playlist', playlist['id']))['total'], 1)
+        self.song('two.mp3', title='Two')
+        index.scan(self.db, self.root)
+        self.assertEqual(len(json.loads(self.command('playlist-queue', playlist['id']))), 2)
+        change(action='remove', id=playlist['id'], song_id=tracks[0]['id'])
+        self.assertEqual(len(json.loads(self.command('playlist-queue', playlist['id']))), 1)
+        change(action='delete', id=playlist['id'])
+        self.assertEqual(json.loads(self.command('browse', '', '0', 'playlists', ''))['total'], 0)
+        self.assertTrue((self.root / 'one.mp3').is_file())
+
+    def test_play_history_is_persistent_idempotent_and_ranked(self):
+        self.song('one.mp3', title='One')
+        self.song('two.mp3', title='Two')
+        index.scan(self.db, self.root)
+        tracks = json.loads(self.command('search', '', '0'))['tracks']
+        for event_id, song, date in [('1', tracks[0], '2026-11-01T12:00:00Z'), ('2', tracks[0], '2026-11-02T12:00:00Z'), ('3', tracks[1], '2026-11-03T12:00:00Z')]:
+            event = json.dumps(dict(id=event_id, track_id=song['id'], played_at=date))
+            self.command('record-play', event)
+            self.command('record-play', event)  # A retry never counts twice.
+        most = json.loads(self.command('browse', '', '0', 'most-played', ''))
+        self.assertEqual([s['play_count'] for s in most['tracks']], [2, 1])
+        recent = json.loads(self.command('browse', '', '0', 'recent', ''))
+        self.assertEqual(recent['tracks'][0]['id'], tracks[1]['id'])
+        index.scan(self.db, self.root)
+        self.assertEqual(json.loads(self.command('browse', '', '0', 'most-played', ''))['tracks'][0]['play_count'], 2)
+
     def test_prune_unplug_rollback_and_skip_symlinks(self):
         song = self.song('one.mp3')
         (self.root / 'linked.mp3').symlink_to(song)

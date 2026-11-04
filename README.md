@@ -55,9 +55,16 @@ not a permanent ripped music library.
 
 ## Browser interface
 
-The app also serves a small web page on port **8080**, with no login. From a
+The app serves a music library on port **8080**, with no login. From a
 device on the same network, open `http://raspberrypi.local:8080` or
 `http://<Pi-IP-address>:8080` (find the address with `hostname -I` on the Pi).
+
+The Spotify-style **USB Player** library is the default page, regardless of the
+current audio source. The top-right buttons open **CD**, **Radio**, **Spotify**,
+**Raspberry Pi**, and **Settings**. CD, Radio, and Spotify select that playback
+source; USB Player returns to browsing without interrupting the current source.
+Choosing a USB song, playlist, or Mix all starts USB playback. Opening the page
+does not change playback. The compact `/display` touchscreen page is unchanged.
 
 For your system MPD instance:
 
@@ -65,7 +72,7 @@ For your system MPD instance:
 go run ./cmd/cdplayer -mpd 127.0.0.1:6600 -mpd-auto-device
 ```
 
-The page shows disc presence, audio track numbers, playback state, elapsed/total
+The **CD** view shows disc presence, audio track numbers, playback state, elapsed/total
 track time, and the latest player error. Click a track to play it, or use Play,
 Pause, Stop, Previous, Next, and Eject. Eject stops and clears playback before
 opening the configured drive's tray. If stopping fails, the tray is left alone;
@@ -1223,7 +1230,7 @@ counting and checking the file list repeats. Only the unfinished batch needs to
 be redone. As with any filesystem, durability depends on the storage device
 honoring flushes; this does not protect against a damaged SD card or USB disk.
 
-Under **Pick song · USB Music**, progress first shows **Counting MP3 files…** and
+Under **USB Player**, progress first shows **Counting MP3 files…** and
 the number found, with an indeterminate bar. Once the count is known it shows a
 percentage, checked/total files and saved songs. The percentage measures files
 checked, not bytes or estimated time remaining; it reaches 100% only after final
@@ -1243,10 +1250,35 @@ separately from the playback loop.
 
 Selecting USB music disconnects Spotify and suspends CD autoplay. Inserting a CD,
 stopping USB playback, or unplugging the drive does not start the CD. Choose
-**Switch to CD** to return, or reconnect Spotify to take over playback. Eject
+**CD** in the top-right navigation to return, or reconnect Spotify to take over playback. Eject
 opens the CD tray without stopping USB music. After an MPD restart that loses its
 queue, pick a USB song again. As before, restarting the application starts in CD
 mode.
+
+### Playlists and listening history
+
+Use **＋ Create** in the library sidebar, or **Playlists → New playlist**, to
+create a playlist. The **＋** beside a song adds it to an existing or new playlist.
+Open a playlist to play it in saved order, rename it, remove individual songs,
+or delete it. A song is added only once per playlist. Deleting a playlist never
+deletes music files, and edits do not change a queue that is already playing.
+Playlist playback skips unavailable files; their saved entries are retained so
+they return if the same files are indexed again.
+
+**Most played**, **Recently played**, and the home shelves use USB listening
+recorded by the player, including playback started by physical buttons or other
+browsers. A play counts after 30 seconds of actual playback, or halfway through
+a shorter song. Pausing does not add time; resuming does not count again. Quick
+skips and forward seeks do not count as listening. Replaying a song can add a
+new play. Statistics start when this version is installed; earlier listening
+cannot be reconstructed. CD, radio, and Spotify are not included in these USB
+statistics.
+
+Playlists and counts are stored in the Pi's `library.sqlite` cache alongside the
+music index, shared by every browser and retained across application restarts
+and rescans. Keep that database when upgrading or moving the installation.
+Nothing is written to the USB music files. History writes run separately from
+playback; failures are reported in the service journal.
 
 Library checks (Python tests require `python3-mutagen`):
 

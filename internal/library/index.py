@@ -8,6 +8,7 @@ import sqlite3
 import sys
 import time
 import unicodedata
+import uuid
 
 MAX_ART = 5 * 1024 * 1024
 CHECKPOINT_FILES = 100
@@ -31,6 +32,12 @@ def connect(path):
             stamp TEXT);
         CREATE TABLE IF NOT EXISTS artwork (id TEXT PRIMARY KEY, data BLOB);
         CREATE TABLE IF NOT EXISTS scan_state (id INTEGER PRIMARY KEY CHECK (id = 1), data TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS playlists (id TEXT PRIMARY KEY, name TEXT NOT NULL, created TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS playlist_items (
+            position INTEGER PRIMARY KEY AUTOINCREMENT, playlist_id TEXT NOT NULL, track_id TEXT NOT NULL,
+            UNIQUE(playlist_id, track_id));
+        CREATE TABLE IF NOT EXISTS play_stats (track_id TEXT PRIMARY KEY, play_count INTEGER NOT NULL, last_played TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS play_events (id TEXT PRIMARY KEY, track_id TEXT NOT NULL, played_at TEXT NOT NULL);
     ''')
     return db
 
@@ -203,6 +210,34 @@ def browse(db, query, offset, view, selected=''):
     db.create_function('folder', 1, lambda path: str(Path(path).parent), deterministic=True)
     db.create_function('normalized', 1, normalize, deterministic=True)
     terms = normalize(query).split()[:20]
+    if view == 'playlists':
+        where = ' AND '.join('instr(normalized(p.name), ?) > 0' for _ in terms) or '1'
+        total = db.execute('SELECT count(*) FROM playlists p WHERE ' + where, terms).fetchone()[0]
+        rows = db.execute('SELECT p.*, (SELECT count(*) FROM playlist_items i JOIN tracks t ON t.id=i.track_id WHERE i.playlist_id=p.id) AS count, '
+                          '(SELECT t.cover FROM playlist_items i JOIN tracks t ON t.id=i.track_id WHERE i.playlist_id=p.id ORDER BY i.position LIMIT 1) AS cover '
+                          'FROM playlists p WHERE ' + where + ' ORDER BY p.created, p.id LIMIT 20 OFFSET ?', [*terms, offset])
+        return {'total': total, 'collections': [dict(id=r['id'], title=r['name'], artist='Playlist', count=r['count'],
+                cover_url='/api/library/art/' + r['cover'] if r['cover'] else '') for r in rows]}
+    if view in ('most-played', 'recent', 'playlist'):
+        where = ' AND '.join('instr(t.search, ?) > 0' for _ in terms) or '1'
+        params = list(terms)
+        if view == 'playlist':
+            if not db.execute('SELECT 1 FROM playlists WHERE id=?', (selected,)).fetchone():
+                raise ValueError('Playlist no longer exists')
+            join = 'tracks t JOIN playlist_items i ON t.id=i.track_id LEFT JOIN play_stats s ON t.id=s.track_id'
+            where += ' AND i.playlist_id=?'
+            params.append(selected)
+            order = 'i.position'
+        else:
+            join = 'tracks t JOIN play_stats s ON t.id=s.track_id'
+            order = 's.play_count DESC, s.last_played DESC, t.id' if view == 'most-played' else 's.last_played DESC, t.id'
+        total = db.execute('SELECT count(*) FROM ' + join + ' WHERE ' + where, params).fetchone()[0]
+        rows = db.execute('SELECT t.*, COALESCE(s.play_count,0) AS play_count, s.last_played FROM ' + join + ' WHERE ' + where +
+                          ' ORDER BY ' + order + ' LIMIT 20 OFFSET ?', [*params, offset])
+        tracks = [public(r) for r in rows]
+        for track in tracks:
+            track.pop('path')
+        return {'tracks': tracks, 'total': total}
     if view in ('albums', 'artists'):
         group = 'folder(path), album' if view == 'albums' else 'artist'
         # The representative is the first album track, matching playback order.
@@ -236,6 +271,46 @@ def browse(db, query, offset, view, selected=''):
     return {'tracks': tracks, 'total': total}
 
 
+def playlist_change(db, change):
+    action, ident = change['action'], change.get('id', '')
+    name = change.get('name', '').strip()
+    if action in ('create', 'rename') and (not name or len(name) > 120):
+        raise ValueError('Give the playlist a name of 1–120 characters')
+    with db:
+        if action == 'create':
+            ident = uuid.uuid4().hex
+            db.execute('INSERT INTO playlists VALUES(?,?,?)', (ident, name, datetime.now(timezone.utc).isoformat()))
+        else:
+            if not db.execute('SELECT 1 FROM playlists WHERE id=?', (ident,)).fetchone():
+                raise ValueError('Playlist no longer exists')
+            if action == 'rename':
+                db.execute('UPDATE playlists SET name=? WHERE id=?', (name, ident))
+            elif action == 'delete':
+                db.execute('DELETE FROM playlist_items WHERE playlist_id=?', (ident,))
+                db.execute('DELETE FROM playlists WHERE id=?', (ident,))
+            elif action == 'add':
+                song = change.get('song_id', '')
+                if not db.execute('SELECT 1 FROM tracks WHERE id=?', (song,)).fetchone():
+                    raise ValueError('Song is no longer indexed')
+                db.execute('INSERT OR IGNORE INTO playlist_items(playlist_id,track_id) VALUES(?,?)', (ident, song))
+            elif action == 'remove':
+                db.execute('DELETE FROM playlist_items WHERE playlist_id=? AND track_id=?', (ident, change.get('song_id', '')))
+            else:
+                raise ValueError('Unknown playlist action')
+    return {'id': ident, 'title': name}
+
+
+def record_play(db, event):
+    with db:
+        inserted = db.execute('INSERT OR IGNORE INTO play_events VALUES(?,?,?)',
+                              (event['id'], event['track_id'], event['played_at'])).rowcount
+        if inserted:
+            db.execute('INSERT INTO play_stats VALUES(?,1,?) ON CONFLICT(track_id) DO UPDATE '
+                       'SET play_count=play_count+1,last_played=MAX(last_played,excluded.last_played)',
+                       (event['track_id'], event['played_at']))
+    return {'recorded': bool(inserted)}
+
+
 def main():
     command, database, root, *args = sys.argv[1:]
     db = connect(database)
@@ -258,6 +333,15 @@ def main():
             track.pop('path')
     elif command == 'browse':
         result = browse(db, args[0], int(args[1]), args[2], args[3])
+    elif command == 'playlist-change':
+        result = playlist_change(db, json.loads(args[0]))
+    elif command == 'record-play':
+        result = record_play(db, json.loads(args[0]))
+    elif command == 'playlist-queue':
+        if not db.execute('SELECT 1 FROM playlists WHERE id=?', (args[0],)).fetchone():
+            raise ValueError('Playlist no longer exists')
+        result = [public(r) for r in db.execute('SELECT t.* FROM playlist_items i JOIN tracks t ON t.id=i.track_id '
+                                               'WHERE i.playlist_id=? ORDER BY i.position', (args[0],))]
     elif command == 'mix':
         result = [public(row) for row in db.execute('SELECT * FROM tracks ORDER BY RANDOM()')]
     elif command == 'get':

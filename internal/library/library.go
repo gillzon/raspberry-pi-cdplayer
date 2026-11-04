@@ -21,14 +21,16 @@ import (
 var helper string
 
 type Track struct {
-	ID       string  `json:"id"`
-	Path     string  `json:"path,omitempty"`
-	Title    string  `json:"title"`
-	Artist   string  `json:"artist"`
-	Album    string  `json:"album"`
-	Track    int     `json:"track"`
-	Duration float64 `json:"duration"`
-	CoverURL string  `json:"cover_url"`
+	PlayCount  int     `json:"play_count,omitempty"`
+	LastPlayed string  `json:"last_played,omitempty"`
+	ID         string  `json:"id"`
+	Path       string  `json:"path,omitempty"`
+	Title      string  `json:"title"`
+	Artist     string  `json:"artist"`
+	Album      string  `json:"album"`
+	Track      int     `json:"track"`
+	Duration   float64 `json:"duration"`
+	CoverURL   string  `json:"cover_url"`
 }
 
 type Status struct {
@@ -65,6 +67,7 @@ type Library struct {
 	mu                      sync.RWMutex
 	status                  Status
 	wake                    chan struct{}
+	plays                   chan playEvent
 }
 
 func New(root, database string) (*Library, error) {
@@ -74,7 +77,7 @@ func New(root, database string) (*Library, error) {
 	if err := os.MkdirAll(filepath.Dir(database), 0750); err != nil {
 		return nil, err
 	}
-	return &Library{Root: filepath.Clean(root), Database: database, wake: make(chan struct{}, 1), status: Status{Enabled: true}}, nil
+	return &Library{Root: filepath.Clean(root), Database: database, wake: make(chan struct{}, 1), plays: make(chan playEvent, 128), status: Status{Enabled: true}}, nil
 }
 
 func (l *Library) run(ctx context.Context, action string, args ...string) ([]byte, error) {
@@ -306,6 +309,10 @@ func (l *Library) Mix(ctx context.Context) ([]Track, error) {
 	if err := json.Unmarshal(data, &tracks); err != nil {
 		return nil, err
 	}
+	return l.available(ctx, tracks)
+}
+
+func (l *Library) available(ctx context.Context, tracks []Track) ([]Track, error) {
 	available := make([]Track, 0, len(tracks))
 	for _, track := range tracks {
 		if err := ctx.Err(); err != nil {

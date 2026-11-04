@@ -203,6 +203,8 @@ func main() {
 	var music *library.Library
 	var usbQueue []library.Track
 	usbMix := false
+	usbPlaylist := ""
+	var playCounter library.PlayCounter
 	if *musicDir != "" {
 		if *cacheDir == "" {
 			slog.Error("USB music requires -cache-dir; use -music-dir= to disable")
@@ -234,6 +236,17 @@ func main() {
 			}
 		}()
 		go music.Run(ctx)
+		historyCtx, stopHistory := context.WithCancel(context.Background())
+		historyDone := make(chan struct{})
+		go func() { defer close(historyDone); music.RunHistory(historyCtx) }()
+		defer func() {
+			stopHistory()
+			select {
+			case <-historyDone:
+			case <-time.After(5 * time.Second):
+				slog.Warn("listening history shutdown timed out")
+			}
+		}()
 	}
 	commands := make(chan controlRequest)
 	website := &web.Server{Library: music, Selection: trackRequests.Snapshot, Control: func(ctx context.Context, cmd web.Command) error {
@@ -244,7 +257,7 @@ func main() {
 
 			return nil
 		}
-		if cmd.Action == "screen-sleep" || cmd.Action == "screen-toggle" || cmd.Action == "play" || cmd.Action == "pause" || cmd.Action == "stop" || cmd.Action == "eject" || cmd.Action == "source-cd" || cmd.Action == "usb-play" || cmd.Action == "usb-mix" {
+		if cmd.Action == "screen-sleep" || cmd.Action == "screen-toggle" || cmd.Action == "play" || cmd.Action == "pause" || cmd.Action == "stop" || cmd.Action == "eject" || cmd.Action == "source-cd" || cmd.Action == "usb-play" || cmd.Action == "usb-mix" || cmd.Action == "usb-playlist" {
 			trackRequests.Cancel()
 		}
 		request := controlRequest{ctx: ctx, command: cmd, result: make(chan error, 1)}
@@ -315,6 +328,7 @@ func main() {
 		if controller.Source() == "usb" {
 			state.USBQueueLength = len(usbQueue)
 			state.USBMix = usbMix
+			state.USBPlaylist = usbPlaylist
 			if position, e := strconv.Atoi(state.MPD["song"]); e == nil && position >= 0 && position < len(usbQueue) {
 				song := usbQueue[position]
 				song.Path = ""
@@ -329,6 +343,11 @@ func main() {
 		}
 		if err != nil {
 			state.Error = err.Error()
+		}
+		if music != nil {
+			if id := playCounter.Observe(state.Source, state.USB, state.MPD, state.Updated); id != "" {
+				music.QueuePlay(id)
+			}
 		}
 		website.Set(state)
 	}
@@ -366,7 +385,7 @@ func main() {
 			screen.setAsleep(sleep, time.Now())
 			publish(nil)
 			return nil
-		case "play", "toggle", "track", "next", "previous", "source-next", "source-cd", "source-usb", "source-radio", "radio-play", "usb-play", "usb-mix", "source-spotify":
+		case "play", "toggle", "track", "next", "previous", "source-next", "source-cd", "source-usb", "source-radio", "radio-play", "usb-play", "usb-mix", "usb-playlist", "source-spotify":
 			screen.setAsleep(false, time.Now())
 		}
 
@@ -427,6 +446,7 @@ func main() {
 				controller.UseUSB()
 				usbQueue = nil
 				usbMix = false
+				usbPlaylist = ""
 				receiver.Tick()
 			case "source-radio", "radio-play":
 				station := selectedStation
@@ -512,7 +532,7 @@ func main() {
 						receiver.Apply(request.command.Event)
 					}
 				}
-			case "usb-play", "usb-mix":
+			case "usb-play", "usb-mix", "usb-playlist":
 				if music == nil {
 					err = fmt.Errorf("USB music is disabled")
 					break
@@ -520,7 +540,19 @@ func main() {
 				var queue []library.Track
 				selected := -1
 				mix := request.command.Action == "usb-mix"
-				if mix {
+				if request.command.Action == "usb-playlist" {
+					queue, err = music.Playlist(request.ctx, request.command.PlaylistID)
+					if request.command.SongID == "" {
+						selected = 0
+					} else {
+						for i, track := range queue {
+							if track.ID == request.command.SongID {
+								selected = i
+								break
+							}
+						}
+					}
+				} else if mix {
 					queue, err = music.Mix(request.ctx)
 					selected = 0
 				} else {
@@ -566,6 +598,8 @@ func main() {
 				if err == nil {
 					usbQueue = queue
 					usbMix = mix
+					usbPlaylist = request.command.PlaylistID
+					playCounter = library.PlayCounter{}
 				}
 				receiver.Tick()
 			case "source-cd":

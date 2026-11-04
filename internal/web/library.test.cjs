@@ -4,7 +4,7 @@ const fs=require('node:fs');
 const vm=require('node:vm');
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
 
-function element(){return {style:{},dataset:{},attributes:{},hidden:false,disabled:false,textContent:'',value:'',children:[],setAttribute(k,v){this.attributes[k]=v},removeAttribute(k){delete this.attributes[k]},focus(){},append(e){this.children.push(e)},replaceChildren(...e){this.children=e}}}
+function element(){return {style:{},dataset:{},attributes:{},hidden:false,disabled:false,textContent:'',value:'',children:[],setAttribute(k,v){this.attributes[k]=v},removeAttribute(k){delete this.attributes[k]},focus(){},showModal(){this.open=true},close(){this.open=false},append(e){this.children.push(e)},replaceChildren(...e){this.children=e}}}
 
 test('USB browser searches one field, renders safe text, pages and selects by ID',async()=>{
  const elements=new Map();const get=id=>{if(!elements.has(id))elements.set(id,element());return elements.get(id)};
@@ -18,7 +18,7 @@ test('USB browser searches one field, renders safe text, pages and selects by ID
  get('musicSearch').value='bjork debut';
  get('pickSong').onclick();await tick();
  assert.equal(calls[0][0],'/api/library?q=bjork%20debut&offset=0');
- const button=get('musicResults').children[0];
+ const button=get('musicResults').children[0].children[0];
  assert.equal(button.children[1].children[1].children[0].textContent,'<script>bad()</script>');
  assert.equal(button.children[1].children[1].children[1].textContent,'Björk');
  assert.equal(button.children[2].textContent,'Debut');
@@ -73,10 +73,10 @@ test('USB status opens the library, follows the current song, and blocks unavail
  const update=(id,playback='play',source='usb',blocked=false)=>context.usbBrowserUpdate({source,usb:{id},mpd:{state:playback},usb_mix:true},blocked);
  update('one');await tick();
  assert.equal(get('musicBrowser').hidden,false);
- assert.equal(requests.length,2);
+ assert.equal(requests.length,4);
  assert.equal(get('libraryHome').hidden,false);
  get('viewSongs').onclick();await tick();
- const [first,second]=get('musicResults').children;
+ const [first,second]=get('musicResults').children.map(row=>row.children[0]);
  assert.equal(first.attributes['aria-current'],'true');
  assert.equal(first.attributes['aria-label'],'Pause First by Artist · Album');
  first.onclick();assert.deepEqual(plays.pop(),['toggle']);
@@ -85,7 +85,7 @@ test('USB status opens the library, follows the current song, and blocks unavail
  update('two');
  assert.equal(first.attributes['aria-current'],'false');
  assert.equal(second.attributes['aria-current'],'true');
- assert.equal(get('musicResults').children[0],first,'polling preserves row focus');
+ assert.equal(get('musicResults').children[0].children[0],first,'polling preserves row focus');
  first.onclick();assert.deepEqual(plays.pop(),['usb-play',undefined,undefined,'one']);
  context.usbBrowserUpdate(null,true);
  assert.equal(first.disabled,true);assert.equal(get('mixAll').disabled,true);
@@ -94,7 +94,7 @@ test('USB status opens the library, follows the current song, and blocks unavail
  assert.equal(second.attributes['aria-current'],'false');
  assert.equal(first.disabled,false);
  assert.equal(get('mixAll').attributes['aria-pressed'],'false');
- update('two');await tick();assert.equal(requests.length,4);
+ update('two');await tick();assert.equal(requests.length,5);
  assert.equal(get('songList').hidden,false,'Source changes preserve the open library view');
 });
 
@@ -151,4 +151,30 @@ test('home cards browse complete collections, play the first track, and restore 
  get('openPlayingAlbum').onclick();await tick();
  assert.match(calls.at(-1),/view=album&id=song-5$/);
  get('playCollection').onclick();assert.deepEqual(plays.pop(),['usb-play',undefined,undefined,'song-0'],'View album from the current song still plays from the start');
+});
+
+test('source navigation preserves the default library and returning to USB does not interrupt playback',async()=>{
+ const elements=new Map();const get=id=>{if(!elements.has(id))elements.set(id,element());return elements.get(id)};
+ get('appBody').setAttribute('data-layout','library');get('playerPanel').setAttribute('data-layout','library');
+ const tabs=[['playerTab','library'],['cdTab','cd'],['radioTab','radio'],['spotifyTab','spotify']].map(([id,view])=>Object.assign(get(id),{id,dataset:{tab:'playerPanel',view}}));
+ tabs.push(Object.assign(get('systemTab'),{id:'systemTab',dataset:{tab:'systemPanel'}}));
+ const controls=['play','pause','stop','next','previous','toggle','eject'].map(action=>Object.assign(element(),{dataset:{action}}));
+ const posts=[];let state={source:'cd',disc:{ID:'disc',Tracks:[1]},mpd:{state:'play',song:'0'},updated:new Date().toISOString()};
+ const context=vm.createContext({document:{getElementById:get,createElement:element,querySelector:selector=>controls.find(b=>selector.includes(b.dataset.action))||controls[0],querySelectorAll:selector=>selector==='[data-tab]'?tabs:selector==='[data-action]'||selector==='[data-action],[data-track]'?controls:[]},
+  TrackNavigation:class{update(){}cancel(){}},AbortSignal,Date,setTimeout(){},
+  fetch:async(url,options)=>{
+   if(options?.method==='POST'){const body=JSON.parse(options.body);posts.push(body);if(body.action==='source-radio')state={...state,source:'radio',radio:{name:'P1'}}}
+   return {ok:true,json:async()=>url==='/api/radio'?[]:url==='/api/system'?{}:state};
+  }});
+ const html=fs.readFileSync(__dirname+'/index.html','utf8');
+ vm.runInContext([...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m=>m[1]).join('\n'),context);
+ await vm.runInContext('refresh()',context);
+ assert.equal(get('appBody').attributes['data-layout'],'library');assert.equal(posts.length,0);
+ get('cdTab').onclick();assert.equal(get('playerPanel').hidden,false);assert.equal(get('appBody').attributes['data-layout'],'player');
+ get('radioTab').onclick();await tick();assert.equal(posts.at(-1).action,'source-radio');
+ await vm.runInContext('refresh()',context);assert.equal(get('appBody').attributes['data-layout'],'player');
+ const before=posts.length;get('playerTab').onclick();await tick();assert.equal(posts.length,before);
+ assert.equal(get('appBody').attributes['data-layout'],'library');assert.equal(get('playerPanel').hidden,false);
+ assert.equal(vm.runInContext('currentSource',context),'radio');
+ get('systemTab').onclick();assert.equal(get('playerPanel').hidden,true);assert.equal(get('systemPanel').hidden,false);
 });

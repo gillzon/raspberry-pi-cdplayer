@@ -14,8 +14,10 @@ import (
 	"regexp"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/audio"
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/disc"
@@ -54,6 +56,7 @@ type State struct {
 	DisplayVersion    string                `json:"display_version"`
 	Radio             *radio.Station        `json:"radio,omitempty"`
 	USBMix            bool                  `json:"usb_mix"`
+	USBPlaylist       string                `json:"usb_playlist,omitempty"`
 	USB               *library.Track        `json:"usb,omitempty"`
 	USBQueueLength    int                   `json:"usb_queue_length"`
 	Outputs           []mpd.Output          `json:"outputs"`
@@ -71,14 +74,15 @@ type State struct {
 }
 
 type Command struct {
-	Station string        `json:"station"`
-	SongID  string        `json:"song_id"`
-	Output  string        `json:"output"`
-	Event   spotify.Event `json:"event"`
-	Token   string        `json:"token"`
-	Action  string        `json:"action"`
-	Track   int           `json:"track"`
-	DiscID  string        `json:"disc_id"`
+	PlaylistID string        `json:"playlist_id"`
+	Station    string        `json:"station"`
+	SongID     string        `json:"song_id"`
+	Output     string        `json:"output"`
+	Event      spotify.Event `json:"event"`
+	Token      string        `json:"token"`
+	Action     string        `json:"action"`
+	Track      int           `json:"track"`
+	DiscID     string        `json:"disc_id"`
 }
 
 type Server struct {
@@ -102,6 +106,48 @@ func (s *Server) Set(state State) {
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/playlists", func(w http.ResponseWriter, r *http.Request) {
+		if s.Library == nil {
+			http.Error(w, "USB music is disabled", 503)
+			return
+		}
+		var change library.PlaylistChange
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&change); err != nil {
+			http.Error(w, "Invalid playlist request", 400)
+			return
+		}
+		change.Name = strings.TrimSpace(change.Name)
+		if change.Action != "create" && !playlistIDPattern.MatchString(change.ID) {
+			http.Error(w, "Invalid playlist", 400)
+			return
+		}
+		switch change.Action {
+		case "create", "rename":
+			if change.Name == "" || utf8.RuneCountInString(change.Name) > 120 {
+				http.Error(w, "Playlist name must be 1–120 characters", 400)
+				return
+			}
+		case "add", "remove":
+			if !songIDPattern.MatchString(change.SongID) {
+				http.Error(w, "Invalid song", 400)
+				return
+			}
+		case "delete":
+		default:
+			http.Error(w, "Unknown playlist action", 400)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		defer cancel()
+		result, err := s.Library.ChangePlaylist(ctx, change)
+		if err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		json.NewEncoder(w).Encode(result)
+	})
 	mux.HandleFunc("GET /library.css", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/css; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache")
@@ -133,7 +179,12 @@ func (s *Server) Handler() http.Handler {
 		}
 		view, selected := r.URL.Query().Get("view"), r.URL.Query().Get("id")
 		switch view {
-		case "", "songs", "albums", "artists":
+		case "", "songs", "albums", "artists", "playlists", "most-played", "recent":
+		case "playlist":
+			if !playlistIDPattern.MatchString(selected) {
+				http.Error(w, "Invalid playlist", 400)
+				return
+			}
 		case "album", "artist":
 			if !songIDPattern.MatchString(selected) {
 				http.Error(w, "Invalid collection", 400)
@@ -214,6 +265,7 @@ func (s *Server) Handler() http.Handler {
 	})
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
 		w.Write(page)
 	})
 	mux.HandleFunc("GET /api/radio", func(w http.ResponseWriter, r *http.Request) {
@@ -242,6 +294,11 @@ func (s *Server) Handler() http.Handler {
 			return
 		}
 		switch cmd.Action {
+		case "usb-playlist":
+			if !playlistIDPattern.MatchString(cmd.PlaylistID) || (cmd.SongID != "" && !songIDPattern.MatchString(cmd.SongID)) {
+				http.Error(w, "Invalid playlist or song", 400)
+				return
+			}
 		case "radio-play":
 			if _, ok := radio.Find(cmd.Station); !ok {
 				http.Error(w, "Unknown radio station", 400)
@@ -263,7 +320,7 @@ func (s *Server) Handler() http.Handler {
 			return
 		}
 		timeout := 25 * time.Second
-		if cmd.Action == "usb-mix" || cmd.Action == "play" || cmd.Action == "toggle" {
+		if cmd.Action == "usb-mix" || cmd.Action == "usb-playlist" || cmd.Action == "play" || cmd.Action == "toggle" {
 			timeout = 2 * time.Minute
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), timeout)
@@ -282,3 +339,4 @@ func (s *Server) Handler() http.Handler {
 }
 
 var songIDPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
+var playlistIDPattern = regexp.MustCompile(`^[a-f0-9]{32}$`)

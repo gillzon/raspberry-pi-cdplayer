@@ -63,6 +63,9 @@ func TestControls(t *testing.T) {
 		{`{"action":"track","track":12}`, 204, true},
 		{`{"action":"stop"}`, 204, true},
 		{`{"action":"usb-mix"}`, 204, true},
+		{`{"action":"usb-playlist","playlist_id":"` + strings.Repeat("b", 32) + `"}`, 204, true},
+		{`{"action":"usb-playlist","playlist_id":"bad"}`, 400, false},
+		{`{"action":"usb-playlist","playlist_id":"` + strings.Repeat("b", 32) + `","song_id":"bad"}`, 400, false},
 		{`{"action":"radio-play","station":"p1"}`, 204, true},
 		{`{"action":"radio-play","station":"http://localhost/private"}`, 400, false},
 		{`{"action":"radio-play"}`, 400, false},
@@ -171,5 +174,26 @@ func TestDisplayVersionMatchesStatusAndPageCannotBeCached(t *testing.T) {
 	}
 	if page.Header().Get("Cache-Control") != "no-store" {
 		t.Fatal("display can be cached")
+	}
+}
+
+func TestPlaylistValidation(t *testing.T) {
+	l, err := library.New(t.TempDir(), filepath.Join(t.TempDir(), "library.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := (&Server{Library: l}).Handler()
+	for _, body := range []string{
+		`{"action":"create","name":"  "}`,
+		`{"action":"create","name":"` + strings.Repeat("a", 121) + `"}`,
+		`{"action":"delete","id":"bad"}`,
+		`{"action":"add","id":"` + strings.Repeat("b", 32) + `","song_id":"bad"}`,
+		`{"action":"unknown","id":"` + strings.Repeat("b", 32) + `"}`,
+	} {
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest("POST", "/api/playlists", strings.NewReader(body)))
+		if w.Code != 400 {
+			t.Fatalf("%s: %d", body, w.Code)
+		}
 	}
 }

@@ -233,3 +233,67 @@ func TestMixSkipsMissingSongsAndReportsEmptyLibrary(t *testing.T) {
 		}
 	}
 }
+
+func TestHistoryWorkerSavesCountsAndPlaylistQueueUsesOrder(t *testing.T) {
+	if err := exec.Command("python3", "-c", "import mutagen, sqlite3").Run(); err != nil {
+		t.Skip("requires Mutagen")
+	}
+	root := t.TempDir()
+	database := filepath.Join(t.TempDir(), "library.sqlite")
+	l, err := New(root, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"one.mp3", "two.mp3"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("audio"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx := context.Background()
+	if err := l.runScan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	result, err := l.Search(ctx, "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workerCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() { defer close(done); l.RunHistory(workerCtx) }()
+	l.QueuePlay(result.Tracks[0].ID)
+	l.QueuePlay(result.Tracks[0].ID)
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("history worker did not flush")
+	}
+	reopened, err := New(root, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stats, err := reopened.Browse(ctx, "", 0, "most-played", "")
+	if err != nil || len(stats.Tracks) != 1 || stats.Tracks[0].PlayCount != 2 {
+		t.Fatalf("persisted stats: %+v %v", stats, err)
+	}
+	playlist, err := l.ChangePlaylist(ctx, PlaylistChange{Action: "create", Name: "Favorites"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, i := range []int{1, 0} {
+		if _, err := l.ChangePlaylist(ctx, PlaylistChange{Action: "add", ID: playlist.ID, SongID: result.Tracks[i].ID}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	queue, err := l.Playlist(ctx, playlist.ID)
+	if err != nil || len(queue) != 2 || queue[0].ID != result.Tracks[1].ID {
+		t.Fatalf("playlist order: %+v %v", queue, err)
+	}
+	if err := os.Remove(filepath.Join(root, queue[0].Path)); err != nil {
+		t.Fatal(err)
+	}
+	queue, err = l.Playlist(ctx, playlist.ID)
+	if err != nil || len(queue) != 1 || queue[0].ID != result.Tracks[0].ID {
+		t.Fatalf("unavailable song: %+v %v", queue, err)
+	}
+}
