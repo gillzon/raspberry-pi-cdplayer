@@ -1,8 +1,52 @@
 /* The USB browser shares the main page's serialized playback controls. */
-(() => {
+var usbBrowserUpdate = (() => {
  const pageSize=20;
  const get=id=>document.getElementById(id);
  let offset=0,request=null,sequence=0,timer=null,resultKey='';
+ let state=null,blocked=false,wasUSB=false,rows=[],total=0;
+ function update(next,unavailable=false){
+  if(next)state=next;
+  blocked=unavailable;
+  const usb=state?.source==='usb';
+  if(usb&&!wasUSB){
+   get('musicBrowser').hidden=false;
+   get('pickSong').setAttribute('aria-expanded','true');
+   search();
+  }
+  wasUSB=usb;
+  for(const {button,track,number,index} of rows){
+   const current=usb&&state.usb?.id===track.id;
+   button.setAttribute('aria-current',String(current));
+   button.setAttribute('aria-label',(current?(state.mpd?.state==='play'?'Pause ':'Resume '):'Play ')+track.title+' by '+track.artist+' · '+track.album);
+   number.textContent=current?(state.mpd?.state==='play'?'Ⅱ':'▶'):String(index);
+   button.disabled=blocked;
+  }
+  get('mixAll').disabled=blocked||!total;
+  get('mixAll').setAttribute('aria-pressed',String(usb&&!!state.usb_mix));
+ }
+ function makeRow(track,index){
+  const button=document.createElement('button');button.type='button';button.className='song-row';
+  const number=document.createElement('span');number.className='song-number';number.setAttribute('aria-hidden','true');
+  const main=document.createElement('span');main.className='song-main';
+  const art=document.createElement('span');art.className='song-art';art.textContent='♫';art.setAttribute('aria-hidden','true');
+  if(track.cover_url){
+   const img=document.createElement('img');img.src=track.cover_url;img.alt='';img.loading='lazy';img.width=44;img.height=44;
+   img.onerror=()=>{art.textContent='♫'};art.replaceChildren(img);
+  }
+  const copy=document.createElement('span');copy.className='song-copy';
+  const title=document.createElement('span');title.className='song-title';title.textContent=track.title;
+  const artist=document.createElement('span');artist.className='song-artist';artist.textContent=track.artist;
+  copy.append(title);copy.append(artist);main.append(art);main.append(copy);
+  const album=document.createElement('span');album.className='song-album';album.textContent=track.album;
+  const time=document.createElement('span');time.className='song-duration';time.textContent=duration(track.duration);
+  for(const node of [number,main,album,time])button.append(node);
+  button.onclick=()=>{
+   if(blocked)return;
+   if(state?.source==='usb'&&state.usb?.id===track.id)control('toggle');
+   else control('usb-play',undefined,undefined,track.id);
+  };
+  return {button,track,number,index};
+ }
  async function search() {
   if(get('musicBrowser').hidden)return;
   request?.abort();request=new AbortController();
@@ -16,6 +60,7 @@
    const result=await response.json();
    if(revision!==sequence)return;
    const status=result.status||{},tracks=result.tracks||[];
+   total=status.count??result.total??0;
    if(offset&&offset>=result.total){offset=0;clearTimeout(timeout);return search()}
    const meter=get('libraryScanProgress');
    meter.hidden=!status.scanning;
@@ -33,20 +78,15 @@
     (result.total?' · '+(offset+1)+'–'+(offset+tracks.length):get('musicSearch').value.trim()?' · No matching songs':status.scanning?'':' · Mount your USB drive and press Refresh library')+
     (status.warnings?' · Some files have unreadable audio headers; available tags and filenames are shown.':'');
    get('musicPage').textContent='Page '+(Math.floor(offset/pageSize)+1)+' of '+Math.max(1,Math.ceil(result.total/pageSize));
-   const key=JSON.stringify(tracks);
+   get('libraryEmpty').hidden=!!tracks.length;
+   get('libraryEmpty').textContent=get('musicSearch').value.trim()?'No songs found. Try another artist, album, or title.':status.scanning?'Finding your music… Songs will appear as they are scanned.':'Your library is empty. Connect your USB drive and refresh the library.';
+   const key=JSON.stringify([offset,tracks]);
    if(key!==resultKey){
     resultKey=key;
-    get('musicResults').replaceChildren(...tracks.map(track=>{
-     const button=document.createElement('button');
-     button.type='button';button.style.cssText='display:flex;align-items:center;gap:12px;width:100%;text-align:left;margin:8px 0';
-     if(track.cover_url){
-      const art=document.createElement('img');art.src=track.cover_url;art.alt='';art.loading='lazy';art.width=48;art.height=48;art.style.objectFit='cover';art.onerror=()=>{art.hidden=true};button.append(art);
-     }
-     const text=document.createElement('span');text.textContent=track.title+' · '+track.artist+' · '+track.album+' · '+duration(track.duration);button.append(text);
-     button.onclick=()=>control('usb-play',undefined,undefined,track.id);
-     return button;
-    }));
+    rows=tracks.map((track,i)=>makeRow(track,offset+i+1));
+    get('musicResults').replaceChildren(...rows.map(row=>row.button));
    }
+   update(null,blocked);
    get('musicPrevious').disabled=offset===0;get('musicNext').disabled=offset+tracks.length>=result.total;
   }catch(error){if(revision===sequence)get('libraryStatus').textContent=error.name==='AbortError'?'Library request timed out; retrying…':error.message}
   finally{clearTimeout(timeout)}
@@ -54,7 +94,7 @@
  get('pickSong').onclick=()=>{
   const panel=get('musicBrowser');panel.hidden=!panel.hidden;
   get('pickSong').setAttribute('aria-expanded',String(!panel.hidden));
-  if(!panel.hidden){get('musicSearch').focus();search()}else{request?.abort()}
+  if(!panel.hidden){get('musicSearch').focus();search()}else{++sequence;request?.abort()}
  };
  get('musicSearch').oninput=()=>{
   offset=0;++sequence;request?.abort();clearTimeout(timer);
@@ -63,8 +103,9 @@
  get('musicPrevious').onclick=()=>{offset=Math.max(0,offset-pageSize);search()};
  get('musicNext').onclick=()=>{offset+=pageSize;search()};
  get('mixAll').onclick=async()=>{
+  if(blocked||!total)return;
   get('mixAll').disabled=true;
-  try{await control('usb-mix')}finally{get('mixAll').disabled=false}
+  try{await control('usb-mix')}finally{get('mixAll').disabled=blocked||!total}
  };
  get('refreshLibrary').onclick=async()=>{
   get('refreshLibrary').disabled=true;
@@ -78,4 +119,5 @@
  };
  async function poll(){await search();setTimeout(poll,3000)}
  setTimeout(poll,3000);
+ return update;
 })();

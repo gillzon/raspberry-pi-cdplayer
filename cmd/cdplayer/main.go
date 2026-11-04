@@ -357,10 +357,11 @@ func main() {
 				// Attempt both stops even if either fails. Idle suppresses autoplay
 				// and retries stopping MPD after a connection failure.
 				err := errors.Join(receiver.Stop(), controller.UseIdle(request.ctx))
-				if err != nil {
-					publish(err)
-					return err
-				}
+				// Playback failures must not prevent the requested screen sleep.
+				// Idle retains the stop intent and retries stopping MPD on polls.
+				screen.setAsleep(true, time.Now())
+				publish(err)
+				return err
 			}
 			screen.setAsleep(sleep, time.Now())
 			publish(nil)
