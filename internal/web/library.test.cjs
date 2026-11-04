@@ -4,7 +4,7 @@ const fs=require('node:fs');
 const vm=require('node:vm');
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
 
-function element(){return {style:{},dataset:{},hidden:false,disabled:false,textContent:'',value:'',children:[],setAttribute(){},removeAttribute(){},focus(){},append(e){this.children.push(e)},replaceChildren(...e){this.children=e}}}
+function element(){return {style:{},dataset:{},attributes:{},hidden:false,disabled:false,textContent:'',value:'',children:[],setAttribute(k,v){this.attributes[k]=v},removeAttribute(k){delete this.attributes[k]},focus(){},append(e){this.children.push(e)},replaceChildren(...e){this.children=e}}}
 
 test('USB browser searches one field, renders safe text, pages and selects by ID',async()=>{
  const elements=new Map();const get=id=>{if(!elements.has(id))elements.set(id,element());return elements.get(id)};
@@ -19,7 +19,9 @@ test('USB browser searches one field, renders safe text, pages and selects by ID
  get('pickSong').onclick();await tick();
  assert.equal(calls[0][0],'/api/library?q=bjork%20debut&offset=0');
  const button=get('musicResults').children[0];
- assert.match(button.children[1].textContent,/^<script>bad\(\)<\/script> · Björk/);
+ assert.equal(button.children[1].children[1].children[0].textContent,'<script>bad()</script>');
+ assert.equal(button.children[1].children[1].children[1].textContent,'Björk');
+ assert.equal(button.children[2].textContent,'Debut');
  button.onclick();assert.deepEqual(plays[0],['usb-play',undefined,undefined,'abc']);
  assert.equal(get('musicNext').disabled,false);
  result={...result,total:21};get('musicNext').onclick();await tick();
@@ -52,14 +54,53 @@ test('USB browser searches one field, renders safe text, pages and selects by ID
  await get('refreshLibrary').onclick();
  assert.match(get('libraryStatus').textContent,/Using saved library · 0 matching songs/);
  assert.equal(get('libraryScanProgress').hidden,true);
+ assert.equal(get('libraryEmpty').hidden,false);
+ assert.equal(get('mixAll').disabled,false,'Mix all remains available when search has no matches');
  result={...result,status:{phase:'paused',count:5794}};
  await get('refreshLibrary').onclick();
  assert.match(get('libraryStatus').textContent,/Scan paused · 5794 songs saved · Refresh library to continue/);
 });
 
+test('USB status opens the library, follows the current song, and blocks unavailable controls',async()=>{
+ const elements=new Map();const get=id=>{if(!elements.has(id))elements.set(id,element());return elements.get(id)};
+ get('musicBrowser').hidden=true;
+ const plays=[],requests=[];
+ const tracks=[{id:'one',title:'First',artist:'Artist',album:'Album',duration:60},{id:'two',title:'Second',artist:'Artist',album:'Album',duration:90}];
+ const context=vm.createContext({document:{getElementById:get,createElement:element},duration:()=> '1:00',control:(...args)=>plays.push(args),
+  fetch:async url=>{requests.push(url);return {ok:true,json:async()=>({tracks,total:2,status:{}})}},
+  AbortController,AbortSignal,setTimeout:()=>1,clearTimeout(){},encodeURIComponent});
+ vm.runInContext(fs.readFileSync(__dirname+'/library.js','utf8'),context);
+ const update=(id,playback='play',source='usb',blocked=false)=>context.usbBrowserUpdate({source,usb:{id},mpd:{state:playback},usb_mix:true},blocked);
+ update('one');await tick();
+ assert.equal(get('musicBrowser').hidden,false);
+ assert.equal(requests.length,2);
+ assert.equal(get('libraryHome').hidden,false);
+ get('viewSongs').onclick();await tick();
+ const [first,second]=get('musicResults').children;
+ assert.equal(first.attributes['aria-current'],'true');
+ assert.equal(first.attributes['aria-label'],'Pause First by Artist · Album');
+ first.onclick();assert.deepEqual(plays.pop(),['toggle']);
+ update('one','pause');
+ assert.equal(first.attributes['aria-label'],'Resume First by Artist · Album');
+ update('two');
+ assert.equal(first.attributes['aria-current'],'false');
+ assert.equal(second.attributes['aria-current'],'true');
+ assert.equal(get('musicResults').children[0],first,'polling preserves row focus');
+ first.onclick();assert.deepEqual(plays.pop(),['usb-play',undefined,undefined,'one']);
+ context.usbBrowserUpdate(null,true);
+ assert.equal(first.disabled,true);assert.equal(get('mixAll').disabled,true);
+ first.onclick();assert.equal(plays.length,0);
+ update('two','play','cd');
+ assert.equal(second.attributes['aria-current'],'false');
+ assert.equal(first.disabled,false);
+ assert.equal(get('mixAll').attributes['aria-pressed'],'false');
+ update('two');await tick();assert.equal(requests.length,4);
+ assert.equal(get('songList').hidden,false,'Source changes preserve the open library view');
+});
+
 test('USB now-playing and next use MPD even with no CD inserted',async()=>{
  const elements=new Map();const get=id=>{if(!elements.has(id))elements.set(id,element());return elements.get(id)};
- const controls=['play','pause','stop','next','previous','eject'].map(action=>Object.assign(element(),{dataset:{action}}));
+ const controls=['play','pause','stop','next','previous','eject','toggle'].map(action=>Object.assign(element(),{dataset:{action}}));
  const switchCD=get('switchCD');switchCD.dataset.action='source-cd';controls.push(switchCD);
  const posts=[];
  const state={source:'usb',updated:new Date().toISOString(),disc:{ID:'',Tracks:[]},mpd:{state:'play',song:'0'},usb:{title:'A song',artist:'An artist',album:'An album',cover_url:'/api/library/art/abc'},usb_queue_length:2};
@@ -77,4 +118,37 @@ test('USB now-playing and next use MPD even with no CD inserted',async()=>{
  assert.equal(controls[0].disabled,false);
  controls.find(b=>b.dataset.action==='next').onclick();await tick();
  assert.equal(posts[0].action,'next');
+ controls.find(b=>b.dataset.action==='toggle').onclick();await tick();
+ assert.equal(posts[1].action,'toggle');
+ assert.equal(get('usbToggle').hidden,false);
+ assert.equal(get('usbToggle').attributes['aria-label'],'Pause');
+ state.mpd.state='pause';await vm.runInContext('refresh()',context);
+ assert.equal(get('usbToggle').attributes['aria-label'],'Play');
+});
+
+test('home cards browse complete collections, play the first track, and restore navigation',async()=>{
+ const elements=new Map();const get=id=>{if(!elements.has(id))elements.set(id,element());return elements.get(id)};
+ get('musicBrowser').hidden=true;
+ const calls=[],plays=[];
+ const album={id:'album-first',title:'Same title',artist:'Artist',count:25,cover_url:''};
+ const tracks=Array.from({length:20},(_,i)=>({id:'song-'+i,title:'Song '+i,artist:'Artist',album:'Same title',duration:60}));
+ const context=vm.createContext({document:{getElementById:get,createElement:element},duration:()=> '1:00',control:(...args)=>plays.push(args),
+  fetch:async url=>{calls.push(url);return {ok:true,json:async()=>url.includes('view=album&')?{tracks,total:25,status:{count:50}}:{collections:[album],total:1,status:{count:50}}}},
+  AbortController,AbortSignal,setTimeout:()=>1,clearTimeout(){},encodeURIComponent});
+ vm.runInContext(fs.readFileSync(__dirname+'/library.js','utf8'),context);
+ context.usbBrowserUpdate({source:'usb',usb:{id:'song-5',album:'Same title',artist:'Artist'},mpd:{state:'play'},usb_queue_length:25});await tick();
+ assert.equal(get('quickPicks').children.length,1);
+ assert.equal(get('homeArtists').children.length,1);
+ get('quickPicks').children[0].onclick();await tick();
+ assert.match(calls.at(-1),/view=album&id=album-first$/);
+ assert.equal(get('libraryHome').hidden,true);
+ assert.equal(get('collectionTitle').textContent,'Same title');
+ get('playCollection').onclick();assert.deepEqual(plays.pop(),['usb-play',undefined,undefined,'song-0']);
+ get('musicNext').onclick();await tick();
+ assert.match(calls.at(-1),/offset=20&view=album/);
+ get('browseBack').onclick();await tick();
+ assert.equal(get('libraryHome').hidden,false);
+ get('openPlayingAlbum').onclick();await tick();
+ assert.match(calls.at(-1),/view=album&id=song-5$/);
+ get('playCollection').onclick();assert.deepEqual(plays.pop(),['usb-play',undefined,undefined,'song-0'],'View album from the current song still plays from the start');
 });

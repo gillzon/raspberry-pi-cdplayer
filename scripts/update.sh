@@ -131,6 +131,20 @@ if not state.get('audio_cache_enabled') or state.get('cd_read_speed', 0) <= 0:
 print(f"Quiet CD mode active: {state['cd_startup_speed']}x startup request, "
       f"{state['cd_read_speed']}x playback request and paced caching.")
 PY
+# The display controls need their companion services as well as the new binary.
+# Install screen sleep on supported displays, and refresh previously installed
+# GPIO controls without enabling new hardware wiring automatically.
+if [[ -r /sys/class/backlight/rpi_backlight/max_brightness ]] && [[ "$(cat /sys/class/backlight/rpi_backlight/max_brightness)" == 1 ]]; then
+    bash scripts/setup-screen-sleep.sh
+else
+    echo 'Screen sleep service not installed: supported rpi_backlight driver not found.'
+fi
+if [[ -f /etc/systemd/system/cdplayer-buttons.service ]]; then
+    sudo install -D -m 0644 scripts/player-buttons.py /usr/local/lib/cdplayer/player-buttons.py
+    sudo install -m 0644 deploy/cdplayer-buttons.service /etc/systemd/system/cdplayer-buttons.service
+    sudo systemctl daemon-reload
+    sudo systemctl try-restart cdplayer-buttons.service
+fi
 echo "Updated to $(git rev-parse --short HEAD). CD player is running and enabled at boot."
 echo "Web UI: http://raspberrypi.local:8080 (or use the Pi's IP address)."
 }

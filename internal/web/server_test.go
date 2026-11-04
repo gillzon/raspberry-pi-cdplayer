@@ -5,12 +5,34 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/disc"
+	"github.com/gillzon/raspberry-pi-cdplayer/internal/library"
 	"github.com/gillzon/raspberry-pi-cdplayer/internal/systeminfo"
 )
+
+func TestLibraryBrowseValidationAndStyles(t *testing.T) {
+	l, err := library.New(t.TempDir(), filepath.Join(t.TempDir(), "library.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := (&Server{Library: l}).Handler()
+	for _, query := range []string{"view=unknown", "view=album", "view=artist&id=bad", "view=albums&offset=-1"} {
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest("GET", "/api/library?"+query, nil))
+		if w.Code != 400 {
+			t.Fatalf("%s: %d %s", query, w.Code, w.Body.String())
+		}
+	}
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest("GET", "/library.css", nil))
+	if w.Code != 200 || !strings.HasPrefix(w.Header().Get("Content-Type"), "text/css") || !strings.Contains(w.Body.String(), "#librarySidebar") {
+		t.Fatal("missing embedded library stylesheet")
+	}
+}
 
 func TestStatusIsSnapshot(t *testing.T) {
 	s := &Server{}

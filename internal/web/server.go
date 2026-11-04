@@ -42,6 +42,9 @@ var navigation []byte
 //go:embed library.js
 var libraryScript []byte
 
+//go:embed library.css
+var libraryStyles []byte
+
 type State struct {
 	AudioCacheEnabled bool                  `json:"audio_cache_enabled"`
 	CDReadSpeed       int                   `json:"cd_read_speed"`
@@ -99,6 +102,11 @@ func (s *Server) Set(state State) {
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /library.css", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/css; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Write(libraryStyles)
+	})
 	mux.HandleFunc("GET /library.js", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache")
@@ -123,9 +131,21 @@ func (s *Server) Handler() http.Handler {
 			http.Error(w, "Search is too long", 400)
 			return
 		}
+		view, selected := r.URL.Query().Get("view"), r.URL.Query().Get("id")
+		switch view {
+		case "", "songs", "albums", "artists":
+		case "album", "artist":
+			if !songIDPattern.MatchString(selected) {
+				http.Error(w, "Invalid collection", 400)
+				return
+			}
+		default:
+			http.Error(w, "Unknown library view", 400)
+			return
+		}
 		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 		defer cancel()
-		result, err := s.Library.Search(ctx, query, offset)
+		result, err := s.Library.Browse(ctx, query, offset, view, selected)
 		if err != nil {
 			http.Error(w, err.Error(), 503)
 			return

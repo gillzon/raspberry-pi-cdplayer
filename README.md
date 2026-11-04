@@ -643,7 +643,9 @@ screen without restarting music. Press Play for CD, or choose another source,
 to leave idle and start playback. A short KEY1 press still changes modes (on release).
 AirPlay is not currently implemented, so there is no AirPlay wake integration.
 
-After updating/restarting cdplayer, install on the Pi:
+The update script installs screen sleep when it detects the supported backlight
+driver, and refreshes any previously installed physical button service. For a
+manual installation after updating/restarting cdplayer, run on the Pi:
 
 ```sh
 bash scripts/setup-screen-sleep.sh

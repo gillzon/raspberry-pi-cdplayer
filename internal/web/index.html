@@ -7,30 +7,45 @@
 :root{color-scheme:dark;font:17px system-ui,sans-serif;background:#131817;color:#e8eee9}body{max-width:640px;margin:40px auto;padding:0 20px}h1{font-size:2rem;margin-bottom:8px}.muted{color:#a8b7ae}section{background:#202925;border:1px solid #35473d;border-radius:14px;padding:22px;margin:22px 0}button{font:inherit;background:#30493b;color:inherit;border:1px solid #54745e;border-radius:9px;padding:12px 16px;cursor:pointer}button:hover,button[aria-current=true]{background:#476d53}button:disabled{opacity:.45;cursor:wait}.controls{display:flex;gap:8px;flex-wrap:wrap}#tracks{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px}#error,#commandError{color:#ffb8a5;white-space:pre-wrap}progress{width:100%;accent-color:#9ed6ad}#now{font-size:1.5rem}small{overflow-wrap:anywhere}
 </style>
 <style>[hidden]{display:none!important}.tabs{display:flex;gap:8px;margin:20px 0}.tabs [aria-selected=true]{background:#476d53}.metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}.metrics section{margin:0}.value{font-size:1.8rem;margin:10px 0}dt{color:#a8b7ae;margin-top:14px}dd{margin:4px 0;overflow-wrap:anywhere}</style>
-<h1>CD player</h1>
-<nav class="tabs" role="tablist" aria-label="Views"><button id="playerTab" role="tab" data-tab="playerPanel" aria-controls="playerPanel" aria-selected="true">Player</button><button id="systemTab" role="tab" data-tab="systemPanel" aria-controls="systemPanel" aria-selected="false" tabindex="-1">Raspberry Pi</button><button id="settingsTab" role="tab" data-tab="settingsPanel" aria-controls="settingsPanel" aria-selected="false" tabindex="-1">Settings</button></nav>
+<link rel="stylesheet" href="/library.css">
+<body id="appBody">
+<header id="appHeader"><h1>CD player</h1>
+<div id="usbTopbar" class="usb-only"><button id="usbHome" aria-label="USB library home" title="Home"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10 12 3l9 7v11h-6v-7H9v7H3z"/></svg></button><div class="global-search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="7"/><path d="m15 15 6 6"/></svg><label class="sr-only" for="musicSearch">Search artist, album, or song</label><input id="musicSearch" type="search" placeholder="What do you want to play?" maxlength="512"></div><details id="usbSources" class="usb-only"><summary>USB ▾</summary><div><button data-action="source-cd">Play CD</button><button data-action="source-radio">Internet Radio</button></div></details></div>
+<nav class="tabs" role="tablist" aria-label="Views"><button id="playerTab" role="tab" data-tab="playerPanel" aria-controls="playerPanel" aria-selected="true">Player</button><button id="systemTab" role="tab" data-tab="systemPanel" aria-controls="systemPanel" aria-selected="false" tabindex="-1">Raspberry Pi</button><button id="settingsTab" role="tab" data-tab="settingsPanel" aria-controls="settingsPanel" aria-selected="false" tabindex="-1">Settings</button></nav></header>
 <div id="playerPanel" role="tabpanel" aria-labelledby="playerTab">
-<div id="connection" class="muted" role="status">Connecting…</div>
+<aside id="librarySidebar" class="usb-only" aria-label="Your library">
+<div class="sidebar-heading"><h2>Your Library</h2><span aria-hidden="true">♫</span></div>
+<div class="browse-filters"><button id="sideAlbums" aria-pressed="true">Albums</button><button id="sideArtists" aria-pressed="false">Artists</button><button id="sideSongs">Songs</button></div>
+<div class="sidebar-caption"><span id="sidebarCount">From your USB drive</span><button id="sideShowAll">Show all</button></div>
+<div id="sidebarItems"></div><p id="sidebarEmpty" hidden>No music indexed yet.</p>
+<div class="sidebar-footer"><span class="device-badge">● USB Music</span><div><button data-action="source-cd">CD</button><button data-action="source-radio">Radio</button></div></div>
+</aside>
+<div class="source-bar"><div id="connection" class="muted" role="status">Connecting…</div>
 <style>.album{display:flex;gap:20px;align-items:center;margin:20px 0}.cover{width:150px;height:150px;flex-shrink:0;background:#202925;border-radius:10px;display:grid;place-items:center;overflow:hidden}.cover img{width:100%;height:100%;object-fit:contain}.album h2{margin:0 0 8px}.album p{margin:8px 0}#tracks{grid-template-columns:1fr}#tracks button{text-align:left}@media(max-width:400px){.cover{width:100px;height:100px}}</style>
-<p id="source" role="status"></p><button data-action="source-cd" id="switchCD" hidden>Switch to CD</button>
-<section><h2>Internet Radio · Sweden</h2><label for="radioStation">Station</label> <select id="radioStation" style="font:inherit;padding:12px"></select> <button id="radioListen">Listen</button><p class="muted">Next / Previous changes station. Play reconnects to the live broadcast.</p></section>
-<div class="album" id="cdAlbum"><div class="cover"><img id="coverArt" alt="Album cover" hidden><span id="coverPlaceholder" class="muted">No artwork</span></div><div><h2 id="albumTitle">Unknown album</h2><p id="albumArtist" class="muted">Unknown artist</p><small id="metadataStatus" class="muted"></small><p><a id="albumSource" hidden target="_blank" rel="noopener" style="color:#9ed6ad">MusicBrainz</a></p></div></div>
-<section><div id="now">Waiting for status</div><p id="disc" class="muted"></p><progress id="progress" value="0" max="1"></progress><p id="time">0:00 / 0:00</p>
-<div class="controls"><button data-action="previous">Previous</button><button data-action="play">Play</button><button data-action="pause">Pause</button><button data-action="stop">Stop</button><button data-action="next">Next</button><button data-action="eject">Eject</button></div>
+<p id="source" role="status"></p><button data-action="source-cd" id="switchCD" hidden>Switch to CD</button></div>
+<section id="radioSection"><h2>Internet Radio · Sweden</h2><label for="radioStation">Station</label> <select id="radioStation" style="font:inherit;padding:12px"></select> <button id="radioListen">Listen</button><p class="muted">Next / Previous changes station. Play reconnects to the live broadcast.</p></section>
+<div class="album" id="cdAlbum"><div class="now-panel-heading usb-only">Now playing <span aria-hidden="true">♫</span></div><div class="cover"><img id="coverArt" alt="Album cover" hidden><span id="coverPlaceholder" class="muted">No artwork</span></div><div class="album-copy"><h2 id="playingTitle" class="usb-only">Choose a song</h2><h2 id="albumTitle">Unknown album</h2><p id="albumArtist" class="muted">Unknown artist</p><small id="metadataStatus" class="muted"></small><p><a id="albumSource" hidden target="_blank" rel="noopener" style="color:#9ed6ad">MusicBrainz</a></p><div class="usb-only now-album-card"><span class="muted">FROM YOUR LIBRARY</span><h3 id="playingAlbumName"></h3><p id="playingQueue"></p><button id="openPlayingAlbum">View album →</button></div></div></div>
+<section id="transport"><div class="transport-info"><div id="dockCover" class="usb-only"></div><div class="dock-copy"><div class="usb-only"><div id="dockTitle"></div><div id="dockArtist"></div></div><div id="now">Waiting for status</div><p id="disc" class="muted"></p></div></div><div class="transport-progress"><progress id="progress" value="0" max="1" aria-label="Playback progress"></progress><p id="time">0:00 / 0:00</p></div>
+<div class="controls transport-controls"><button data-action="previous" aria-label="Previous track"><span class="transport-icon" aria-hidden="true">❮</span><span class="transport-label">Previous</span></button><button data-action="play">Play</button><button data-action="pause">Pause</button><button id="usbToggle" data-action="toggle" hidden aria-label="Play"><span id="usbToggleIcon" aria-hidden="true">▶</span></button><button data-action="stop">Stop</button><button data-action="next" aria-label="Next track"><span class="transport-icon" aria-hidden="true">❯</span><span class="transport-label">Next</span></button><button data-action="eject">Eject</button></div>
 <p id="selection" class="muted" role="status"></p><p id="error" role="status"></p><p id="commandError" role="alert"></p></section>
-<section>
+<section id="librarySection">
 <button id="pickSong" aria-expanded="false" aria-controls="musicBrowser">Pick song · USB Music</button>
 <div id="musicBrowser" hidden>
-<h2>USB Music</h2>
-<label for="musicSearch">Search artist, album, or song</label>
-<input id="musicSearch" type="search" placeholder="Search artist, album, or song…" maxlength="512" style="display:block;width:100%;font:inherit;padding:12px;margin:12px 0">
-<div class="controls"><button id="mixAll" title="Shuffle every available song in your USB library">Mix all</button><button id="refreshLibrary">Refresh library</button></div>
-<p id="libraryStatus" role="status"></p>
-<progress id="libraryScanProgress" max="100" hidden aria-label="USB library scan progress"></progress>
-<div id="musicResults"></div>
-<div class="controls"><button id="musicPrevious" disabled>Previous page</button><span id="musicPage" role="status">Page 1 of 1</span><button id="musicNext" disabled>Next page</button></div>
-</div></section>
-<h2 id="tracksHeading">Tracks</h2><div id="tracks"></div><p class="muted"><small id="details"></small></p>
+<div class="library-content">
+<div class="browse-toolbar"><div class="browse-filters"><button id="viewHome" aria-pressed="true">All</button><button id="viewAlbums" aria-pressed="false">Albums</button><button id="viewArtists" aria-pressed="false">Artists</button><button id="viewSongs" aria-pressed="false">Songs</button></div><button id="browseBack" hidden>← Back</button></div>
+<div class="controls library-actions"><button id="mixAll" title="Shuffle every available song in your USB library"><span aria-hidden="true">⤨</span> Mix all</button><button id="refreshLibrary">Refresh library</button></div>
+<div id="libraryHome"><div id="quickPicks" class="quick-picks"></div>
+<div class="shelf-heading"><h2>Albums to get you started</h2><button id="showAlbums">Show all</button></div><div id="homeAlbums" class="card-shelf"></div>
+<div class="shelf-heading"><h2>Your artists</h2><button id="showArtists">Show all</button></div><div id="homeArtists" class="card-shelf artist-shelf"></div>
+</div>
+<div id="collectionHeader" hidden><div id="collectionCover"></div><div><span id="collectionKind"></span><h2 id="collectionTitle"></h2><p id="collectionSubtitle"></p><button id="playCollection" hidden>▶ Play album</button></div></div>
+<div id="collectionGrid" class="collection-grid" hidden></div>
+<div id="songsView" hidden><h2 id="songsHeading">All songs</h2></div><div id="songList"><div class="song-columns" aria-hidden="true"><span>#</span><span>Title / Artist</span><span>Album</span><span>Time</span></div>
+<div id="musicResults" aria-label="Songs"></div>
+</div><p id="libraryEmpty" hidden></p>
+<div id="libraryPagination" class="controls"><button id="musicPrevious" disabled>Previous page</button><span id="musicPage" role="status">Page 1 of 1</span><button id="musicNext" disabled>Next page</button></div>
+<p id="libraryStatus" role="status"></p><progress id="libraryScanProgress" max="100" hidden aria-label="USB library scan progress"></progress></div></div></section>
+<h2 id="tracksHeading">Tracks</h2><div id="tracks"></div><p id="playerDetails" class="muted"><small id="details"></small></p>
 </div>
 <div id="systemPanel" role="tabpanel" aria-labelledby="systemTab" hidden>
 <p id="systemConnection" class="muted" role="status">Loading system information…</p>
@@ -66,6 +81,11 @@ async function refresh(){
   if(!response.ok)throw new Error('Status unavailable');
   const s=await response.json(),m=s.mpd||{},tracks=s.disc.Tracks||[];
   const radio=s.source==='radio',usb=s.source==='usb';currentSource=s.source;
+  $('appBody').setAttribute('data-source',s.source);
+  $('playerPanel').setAttribute('data-source',s.source);
+  $('usbToggle').hidden=!usb;
+  $('usbToggle').setAttribute('aria-label',m.state==='play'?'Pause':'Play');
+  $('usbToggleIcon').textContent=m.state==='play'?'Ⅱ':'▶';
   const spotify=s.source==='spotify',idle=s.source==='idle',sp=s.spotify||{},now=sp.now||{};
   $('source').textContent=radio?'Source: Internet Radio':usb?'Source: USB Music':idle?'Idle · choose a source or press Play CD':spotify?'Source: Spotify · control playback from your phone':s.spotify?.enabled?'Source: CD · Spotify '+(s.spotify.running?'ready':'unavailable'):'Source: CD';
   if(s.spotify?.error)$('source').textContent+=' · '+s.spotify.error;
@@ -96,13 +116,15 @@ async function refresh(){
   if(key!==trackKey){$('tracks').replaceChildren(...tracks.map(n=>{const b=document.createElement('button');b.textContent=names[n]?.title?n+'. '+names[n].title+(names[n].artist?' · '+names[n].artist:''):'Track '+n;b.dataset.track=n;b.onclick=()=>control('track',n);return b}));trackKey=key}
   document.querySelectorAll('[data-track]').forEach(b=>b.setAttribute('aria-current',Number(b.dataset.track)===track?'true':'false'));
   document.querySelectorAll('[data-action],[data-track]').forEach(b=>b.disabled=busy||stale||(spotify&&!['source-cd','eject'].includes(b.dataset.action))||(idle&&!['source-cd','play','eject'].includes(b.dataset.action))||((usb||radio)&&!!b.dataset.track)||(!usb&&!radio&&!tracks.length&&!['source-cd','stop','eject',...(idle?['play']:[])].includes(b.dataset.action)));
- }catch(e){navigation.cancel();$('connection').textContent='Cannot reach player — retrying…';document.querySelectorAll('[data-action],[data-track]').forEach(b=>b.disabled=true)}
+  if(typeof usbBrowserUpdate==='function')usbBrowserUpdate(s,busy||stale);
+ }catch(e){navigation.cancel();$('connection').textContent='Cannot reach player — retrying…';document.querySelectorAll('[data-action],[data-track]').forEach(b=>b.disabled=true);if(typeof usbBrowserUpdate==='function')usbBrowserUpdate(null,true)}
 }
 async function control(action,track,discID,songID,station){
  if(busy)return;
  navigation.cancel();
  busy=true;document.querySelectorAll('[data-action],[data-track]').forEach(b=>b.disabled=true);$('commandError').textContent='';
- try{const r=await fetch('/api/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,track,disc_id:discID,song_id:songID,station}),signal:AbortSignal.timeout(['usb-mix','play'].includes(action)?125000:30000)});if(!r.ok)throw new Error(await r.text())}
+ if(typeof usbBrowserUpdate==='function')usbBrowserUpdate(null,true);
+ try{const r=await fetch('/api/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,track,disc_id:discID,song_id:songID,station}),signal:AbortSignal.timeout(['usb-mix','play','toggle'].includes(action)?125000:30000)});if(!r.ok)throw new Error(await r.text())}
  catch(e){$('commandError').textContent=e.message}
  finally{busy=false;await refresh()}
 }
@@ -158,4 +180,5 @@ async function systemPoll(){
 async function poll(){await refresh();setTimeout(poll,1000)}poll();
 </script>
 <script src="/library.js"></script>
+</body>
 </html>
